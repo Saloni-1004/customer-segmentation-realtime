@@ -37,8 +37,8 @@ if not check_password():
 # 📊 Real-Time Dashboard Code
 # ---------------------------
 
-# PostgreSQL Connection
-DATABASE_URL = "postgresql://postgres:admin@localhost:5432/customer_segmentation"
+# Supabase PostgreSQL Connection
+DATABASE_URL = "postgresql://postgres:Adminsaloni@10@db.fsulfssfgmgxosgpjijw.supabase.co:5432/postgres"
 try:
     engine = create_engine(DATABASE_URL)
 except Exception as e:
@@ -113,7 +113,7 @@ def render_dashboard(df):
     if df["purchase_amount"].max() > 400:
         st.error("⚠️ Alert: High purchase amount detected!")
 
-    if st.download_button("📅 Download Data as CSV", df.to_csv(index=False), "customer_segments.csv", "text/csv"):
+    if st.download_button("🗕️ Download Data as CSV", df.to_csv(index=False), "customer_segments.csv", "text/csv"):
         st.success("Data downloaded successfully!")
 
 # Main Loop
