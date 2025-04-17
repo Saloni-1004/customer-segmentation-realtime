@@ -43,46 +43,35 @@ if not check_password():
 # Get Supabase credentials from Streamlit secrets
 try:
     # Use Streamlit secrets
-    db_host = st.secrets["postgres"]["host"]
-    db_port = st.secrets["postgres"]["port"]
-    db_name = st.secrets["postgres"]["dbname"]
-    db_user = st.secrets["postgres"]["user"]
     db_pass = st.secrets["postgres"]["password"]
     
-    # Try direct connection with specific parameters for IPv4
-    DATABASE_URL = f"postgresql://{db_user}:{db_pass}@{db_host}:{db_port}/{db_name}?sslmode=require"
+    # Use the connection pooler with port 6543 instead of direct connection with 5432
+    # Connection pooler often uses a different port (6543 is common for Supabase)
+    CONNECTION_STRING = f"postgresql://postgres:{db_pass}@db.fsulfssfgmgxosgpjjiw.supabase.co:6543/postgres?sslmode=require"
     
-    # Configure engine with minimal pooling parameters
+    # Create engine with minimal connection parameters
     engine = create_engine(
-        DATABASE_URL,
-        pool_pre_ping=True,
-        pool_recycle=300,
+        CONNECTION_STRING,
         connect_args={
             "application_name": "streamlit_dashboard",
-            "keepalives": 1,
-            "keepalives_idle": 30,
-            "keepalives_interval": 10,
-            "keepalives_count": 5
+            "options": "-c statement_timeout=30000"  # 30 second timeout
         }
     )
-    
-    # Test connection
-    with engine.connect() as conn:
-        conn.execute("SELECT 1")
-    
     st.success("✅ Connected to database")
 except Exception as e:
-    st.error(f"⚠️ Database connection failed: {e}")
-    st.info("Make sure you've set up secrets in Streamlit Cloud and enabled IPv4 access in Supabase!")
-    
-    # Show troubleshooting info
-    st.warning("""
-    Troubleshooting steps:
-    1. Check if you need to purchase the IPv4 add-on in Supabase
-    2. Verify your database credentials are correct
-    3. Try connecting with the connection string directly from Supabase dashboard
-    """)
-    st.stop()
+    # First connection attempt failed, try with Session Pooler
+    try:
+        st.warning("⚠️ Direct connection failed, trying session pooler...")
+        
+        # Try a different pooler port - sometimes it's 5432 for session pooler
+        CONNECTION_STRING = f"postgresql://postgres:{db_pass}@db.fsulfssfgmgxosgpjjiw.supabase.co:5432/postgres?sslmode=require&pool=true"
+        
+        engine = create_engine(CONNECTION_STRING)
+        st.success("✅ Connected to database using session pooler")
+    except Exception as e2:
+        st.error(f"⚠️ All connection attempts failed: {e2}")
+        st.info("Consider purchasing the IPv4 add-on in Supabase for better connectivity.")
+        st.stop()
 
 st.markdown("<h1>📊 Real-Time Customer Segmentation Dashboard</h1>", unsafe_allow_html=True)
 
