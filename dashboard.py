@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -50,23 +49,39 @@ try:
     db_user = st.secrets["postgres"]["user"]
     db_pass = st.secrets["postgres"]["password"]
     
-    # Use connection pooler endpoint instead of direct connection
-    pooler_host = db_host.replace("db.", "db-pooler.")
+    # Try direct connection with specific parameters for IPv4
+    DATABASE_URL = f"postgresql://{db_user}:{db_pass}@{db_host}:{db_port}/{db_name}?sslmode=require"
     
-    DATABASE_URL = f"postgresql://{db_user}:{db_pass}@{pooler_host}:{db_port}/{db_name}?sslmode=require"
-    
-    # Configure engine with connection pooling
+    # Configure engine with minimal pooling parameters
     engine = create_engine(
         DATABASE_URL,
-        pool_size=5,
-        max_overflow=10,
-        pool_timeout=30,
-        pool_recycle=1800
+        pool_pre_ping=True,
+        pool_recycle=300,
+        connect_args={
+            "application_name": "streamlit_dashboard",
+            "keepalives": 1,
+            "keepalives_idle": 30,
+            "keepalives_interval": 10,
+            "keepalives_count": 5
+        }
     )
+    
+    # Test connection
+    with engine.connect() as conn:
+        conn.execute("SELECT 1")
+    
     st.success("✅ Connected to database")
 except Exception as e:
     st.error(f"⚠️ Database connection failed: {e}")
-    st.info("Make sure you've set up secrets in Streamlit Cloud!")
+    st.info("Make sure you've set up secrets in Streamlit Cloud and enabled IPv4 access in Supabase!")
+    
+    # Show troubleshooting info
+    st.warning("""
+    Troubleshooting steps:
+    1. Check if you need to purchase the IPv4 add-on in Supabase
+    2. Verify your database credentials are correct
+    3. Try connecting with the connection string directly from Supabase dashboard
+    """)
     st.stop()
 
 st.markdown("<h1>📊 Real-Time Customer Segmentation Dashboard</h1>", unsafe_allow_html=True)
@@ -126,8 +141,6 @@ def load_data():
         return pd.read_sql(query, engine)
     except Exception as e:
         st.error(f"Error loading data: {e}")
-        # Add more detailed error reporting
-        st.error("Check if your database connection is using IPv6 or IPv4 correctly")
         return pd.DataFrame()
 
 def render_dashboard(df):
@@ -191,7 +204,7 @@ if auto_refresh:
     else:
         render_dashboard(df)
     
-    # Add auto-refresh using javascript
+    # Add auto-refresh using JavaScript (note: this might not work in all Streamlit deployments)
     st.markdown(
         """
         <script>
@@ -204,6 +217,7 @@ if auto_refresh:
     )
 else:
     if st.button("🔄 Refresh Data"):
+        st.cache_data.clear()  # Clear cache to ensure fresh data
         df = load_data()
         if df.empty:
             st.warning("⚠️ No data available or no clusters selected.")
