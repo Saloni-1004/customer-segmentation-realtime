@@ -13,7 +13,7 @@ def check_password():
         return hashlib.sha256(password.encode()).hexdigest()
 
     def password_entered():
-        if hash_password(st.session_state["password"]) == hash_password("admin123"):  # Set your password here
+        if hash_password(st.session_state["password"]) == hash_password("admin123"):
             st.session_state["password_correct"] = True
             del st.session_state["password"]
         else:
@@ -37,8 +37,15 @@ if not check_password():
 # 📊 Real-Time Dashboard Code
 # ---------------------------
 
-# Supabase PostgreSQL Connection
-DATABASE_URL = "postgresql://postgres:Adminsaloni@10@db.fsulfssfgmgxosgpjijw.supabase.co:5432/postgres"
+# 🛡️ Supabase DB connection via secrets
+db_user = st.secrets["DB_USER"]
+db_password = st.secrets["DB_PASSWORD"]
+db_host = st.secrets["DB_HOST"]
+db_port = st.secrets["DB_PORT"]
+db_name = st.secrets["DB_NAME"]
+
+DATABASE_URL = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+
 try:
     engine = create_engine(DATABASE_URL)
 except Exception as e:
@@ -133,3 +140,4 @@ else:
             st.warning("⚠️ No data available.")
         else:
             render_dashboard(df)
+
