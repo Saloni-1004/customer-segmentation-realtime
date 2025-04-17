@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -49,8 +50,19 @@ try:
     db_user = st.secrets["postgres"]["user"]
     db_pass = st.secrets["postgres"]["password"]
     
-    DATABASE_URL = f"postgresql://{db_user}:{db_pass}@{db_host}:{db_port}/{db_name}"
-    engine = create_engine(DATABASE_URL)
+    # Use connection pooler endpoint instead of direct connection
+    pooler_host = db_host.replace("db.", "db-pooler.")
+    
+    DATABASE_URL = f"postgresql://{db_user}:{db_pass}@{pooler_host}:{db_port}/{db_name}?sslmode=require"
+    
+    # Configure engine with connection pooling
+    engine = create_engine(
+        DATABASE_URL,
+        pool_size=5,
+        max_overflow=10,
+        pool_timeout=30,
+        pool_recycle=1800
+    )
     st.success("✅ Connected to database")
 except Exception as e:
     st.error(f"⚠️ Database connection failed: {e}")
@@ -114,6 +126,8 @@ def load_data():
         return pd.read_sql(query, engine)
     except Exception as e:
         st.error(f"Error loading data: {e}")
+        # Add more detailed error reporting
+        st.error("Check if your database connection is using IPv6 or IPv4 correctly")
         return pd.DataFrame()
 
 def render_dashboard(df):
