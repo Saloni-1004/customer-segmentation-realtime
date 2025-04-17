@@ -1,47 +1,74 @@
-from kafka import KafkaProducer
 import json
 import time
 import random
 import requests
+import psycopg2
 
-producer = KafkaProducer(
-    bootstrap_servers='localhost:9092',
-    value_serializer=lambda v: json.dumps(v).encode('utf-8')
+# Supabase PostgreSQL Connection
+conn = psycopg2.connect(
+    host="db.fsulfssfgmgxosgpjjiw.supabase.co",
+    dbname="postgres",
+    user="postgres",
+    password="Adminsaloni@10",  # 👈 change this to your real password
+    port=5432
 )
+cursor = conn.cursor()
 
+# Function to insert data into Supabase PostgreSQL
+def insert_customer(data):
+    cursor.execute("""
+        INSERT INTO customer_segments (customer_id, name, age, purchase_amount, created_at, cluster)
+        VALUES (%s, %s, %s, %s, to_timestamp(%s), %s)
+    """, (
+        data["customer_id"],
+        data["name"],
+        data["age"],
+        data["purchase_amount"],
+        data["timestamp"],
+        data["cluster"]
+    ))
+    conn.commit()
+
+# Fetch users from Fake Store API
 def fetch_real_data():
     response = requests.get("https://fakestoreapi.com/users")
     if response.status_code == 200:
         return response.json()
     return []
 
-# Counters for customer_id and name uniqueness
-customer_id_counter = 1  # Start at 1
+# Unique counters
+customer_id_counter = 1
 name_counter = 1
 
+# Main loop
 while True:
     users = fetch_real_data()
     if not users:
-        print("Failed to fetch data from API, retrying in 5 seconds...")
+        print("⚠️ Failed to fetch data from API, retrying in 5 seconds...")
         time.sleep(5)
         continue
 
     for user in users:
-        customer_id = str(customer_id_counter)  # Simple integer as customer_id (e.g., "1", "2")
-        unique_name = f"{user['name']['firstname']}_{name_counter}"  # e.g., "john_1"
+        customer_id = str(customer_id_counter)
+        unique_name = f"{user['name']['firstname']}_{name_counter}"
 
         data = {
             "customer_id": customer_id,
             "name": unique_name,
             "age": random.randint(18, 65),
             "purchase_amount": round(random.uniform(10, 500), 2),
-            "timestamp": time.time()
+            "timestamp": time.time(),
+            "cluster": random.randint(0, 2)
         }
-        producer.send('customer-data', value=data)
-        print(f"Sent: {data}")
-        customer_id_counter += 1  # Increment customer_id
-        name_counter += 1  # Increment name counter
 
-    time.sleep(5)  # Wait 5 seconds before fetching the next batch
+        try:
+            insert_customer(data)
+            print(f"✅ Inserted into Supabase: {data}")
+        except Exception as e:
+            print(f"❌ Failed to insert: {e}")
 
-producer.flush()
+        customer_id_counter += 1
+        name_counter += 1
+
+    time.sleep(5)
+
