@@ -1,74 +1,75 @@
 import json
-import time
-import random
-import requests
 import psycopg2
+from kafka import KafkaConsumer
 
-# Supabase PostgreSQL Connection
-conn = psycopg2.connect(
-    host="db.fsulfssfgmgxosgpjjiw.supabase.co",
-    dbname="postgres",
-    user="postgres",
-    password="Adminsaloni@10",  # 👈 change this to your real password
-    port=5432
+print("[INFO] Script starting...")
+
+# Kafka setup
+KAFKA_TOPIC = "customer-topic"
+KAFKA_BOOTSTRAP_SERVERS = "localhost:9092"
+
+try:
+    consumer = KafkaConsumer(
+        KAFKA_TOPIC,
+        bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+        value_deserializer=lambda m: json.loads(m.decode("utf-8")),
+        auto_offset_reset="earliest",
+        enable_auto_commit=True,
+        group_id="customer-group"
+    )
+    print("[INFO] Kafka consumer initialized.")
+except Exception as e:
+    print(f"[ERROR] Failed to initialize Kafka consumer: {e}")
+    exit()
+
+# Supabase PostgreSQL connection
+try:
+    conn = psycopg2.connect(
+        host="db.fsulfssfgmgxosgpjjiw.supabase.co",
+        port="5432",
+        dbname="postgres",
+        user="postgres",
+        password="Adminsaloni@10",  # 🔐 Replace this!
+        sslmode='require'
+    )
+    cursor = conn.cursor()
+    print("[INFO] Connected to Supabase PostgreSQL.")
+except Exception as e:
+    print(f"[ERROR] Failed to connect to PostgreSQL: {e}")
+    exit()
+
+# Create table if not exists
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS customers (
+    id SERIAL PRIMARY KEY,
+    name TEXT,
+    email TEXT,
+    country TEXT,
+    segment TEXT
 )
-cursor = conn.cursor()
+""")
+conn.commit()
 
-# Function to insert data into Supabase PostgreSQL
-def insert_customer(data):
-    cursor.execute("""
-        INSERT INTO customer_segments (customer_id, name, age, purchase_amount, created_at, cluster)
-        VALUES (%s, %s, %s, %s, to_timestamp(%s), %s)
-    """, (
-        data["customer_id"],
-        data["name"],
-        data["age"],
-        data["purchase_amount"],
-        data["timestamp"],
-        data["cluster"]
-    ))
-    conn.commit()
-
-# Fetch users from Fake Store API
-def fetch_real_data():
-    response = requests.get("https://fakestoreapi.com/users")
-    if response.status_code == 200:
-        return response.json()
-    return []
-
-# Unique counters
-customer_id_counter = 1
-name_counter = 1
-
-# Main loop
-while True:
-    users = fetch_real_data()
-    if not users:
-        print("⚠️ Failed to fetch data from API, retrying in 5 seconds...")
-        time.sleep(5)
-        continue
-
-    for user in users:
-        customer_id = str(customer_id_counter)
-        unique_name = f"{user['name']['firstname']}_{name_counter}"
-
-        data = {
-            "customer_id": customer_id,
-            "name": unique_name,
-            "age": random.randint(18, 65),
-            "purchase_amount": round(random.uniform(10, 500), 2),
-            "timestamp": time.time(),
-            "cluster": random.randint(0, 2)
-        }
-
+# Consume messages from Kafka
+print("[INFO] Waiting for messages...")
+try:
+    for message in consumer:
+        data = message.value
+        print(f"[INFO] Received: {data}")
         try:
-            insert_customer(data)
-            print(f"✅ Inserted into Supabase: {data}")
-        except Exception as e:
-            print(f"❌ Failed to insert: {e}")
+            cursor.execute(
+                "INSERT INTO customers (name, email, country, segment) VALUES (%s, %s, %s, %s)",
+                (data["name"], data["email"], data["country"], data["segment"])
+            )
+            conn.commit()
+            print("[INFO] Inserted into database.")
+        except Exception as db_err:
+            print(f"[ERROR] Failed to insert into DB: {db_err}")
+except KeyboardInterrupt:
+    print("[INFO] Consumer stopped.")
+finally:
+    cursor.close()
+    conn.close()
+    consumer.close()
 
-        customer_id_counter += 1
-        name_counter += 1
-
-    time.sleep(5)
 
