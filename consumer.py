@@ -1,84 +1,47 @@
-import sys
+from kafka import KafkaProducer
 import json
-import psycopg2
-from kafka import KafkaConsumer
-import pandas as pd
-from sklearn.cluster import KMeans
+import time
+import random
+import requests
 
-# Windows Unicode Encode Error Fix
-sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-
-print("[INFO] Script starting...")
-
-# Initialize Kafka Consumer
-consumer = KafkaConsumer(
-    'customer-data',
+producer = KafkaProducer(
     bootstrap_servers='localhost:9092',
-    auto_offset_reset='earliest',
-    value_deserializer=lambda x: json.loads(x.decode('utf-8')),
-    group_id='customer-group'
+    value_serializer=lambda v: json.dumps(v).encode('utf-8')
 )
-print("[INFO] Kafka consumer initialized.")
 
-# Connect to PostgreSQL
-try:
-    conn = psycopg2.connect(
-        dbname="customer_segmentation",
-        user="postgres",
-        password="admin",
-        host="localhost",
-        port="5432"
-    )
-    conn.autocommit = True
+def fetch_real_data():
+    response = requests.get("https://fakestoreapi.com/users")
+    if response.status_code == 200:
+        return response.json()
+    return []
 
-    cur = conn.cursor()
-    print("[INFO] Connected to PostgreSQL successfully!")
+# Counters for customer_id and name uniqueness
+customer_id_counter = 1  # Start at 1
+name_counter = 1
 
-except Exception as e:
-    print(f"[ERROR] Failed to connect to PostgreSQL: {str(e)}")
-    exit(1)
+while True:
+    users = fetch_real_data()
+    if not users:
+        print("Failed to fetch data from API, retrying in 5 seconds...")
+        time.sleep(5)
+        continue
 
-# Process Kafka Messages
-data = []
-try:
-    print("[INFO] Waiting for messages from Kafka...")
-    for message in consumer:
-        msg = message.value
-        print(f"[INFO] Received message: {msg}")
-        data.append(msg)
+    for user in users:
+        customer_id = str(customer_id_counter)  # Simple integer as customer_id (e.g., "1", "2")
+        unique_name = f"{user['name']['firstname']}_{name_counter}"  # e.g., "john_1"
 
-        # Process in Batches of 5
-        if len(data) >= 5:
-            df = pd.DataFrame(data)
-            required_columns = ['customer_id', 'name', 'age', 'purchase_amount']
+        data = {
+            "customer_id": customer_id,
+            "name": unique_name,
+            "age": random.randint(18, 65),
+            "purchase_amount": round(random.uniform(10, 500), 2),
+            "timestamp": time.time()
+        }
+        producer.send('customer-data', value=data)
+        print(f"Sent: {data}")
+        customer_id_counter += 1  # Increment customer_id
+        name_counter += 1  # Increment name counter
 
-            if not all(col in df.columns for col in required_columns):
-                print(f"[WARNING] Missing columns in data. Found: {df.columns}")
-                data = []
-                continue
+    time.sleep(5)  # Wait 5 seconds before fetching the next batch
 
-            # Apply K-Means Clustering
-            kmeans = KMeans(n_clusters=3, random_state=42)
-            df['cluster'] = kmeans.fit_predict(df[['age', 'purchase_amount']])
-            print(f"[INFO] Clustered {len(data)} messages.")
-
-            # Insert Data into PostgreSQL (no ON CONFLICT, always new rows)
-            for _, row in df.iterrows():
-                cur.execute(
-                    """
-                    INSERT INTO customer_segments (customer_id, name, age, purchase_amount, cluster, created_at)
-                    VALUES (%s, %s, %s, %s, %s, NOW())
-                    """,
-                    (row['customer_id'], row['name'], row['age'], row['purchase_amount'], row['cluster'])
-                )
-            print(f"[INFO] Stored {len(data)} messages in database.")
-            data = []  # Clear batch after processing
-
-except Exception as e:
-    print(f"[ERROR] Consumer encountered an issue: {str(e)}")
-except KeyboardInterrupt:
-    print("[INFO] Stopping consumer...")
-finally:
-    cur.close()
-    conn.close()
-    print("[INFO] Database connection closed.")
+producer.flush()
