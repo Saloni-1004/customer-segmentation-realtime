@@ -1,26 +1,32 @@
 import json
 import psycopg2
 from kafka import KafkaConsumer
+import time
 
-print("[INFO] Script starting...")
+print("[INFO] Consumer script starting...")
 
 # Kafka setup
-KAFKA_TOPIC = "customer-topic"
+KAFKA_TOPIC = "customer-data"
 KAFKA_BOOTSTRAP_SERVERS = "localhost:9092"
 
-try:
-    consumer = KafkaConsumer(
-        KAFKA_TOPIC,
-        bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
-        value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-        auto_offset_reset="earliest",
-        enable_auto_commit=True,
-        group_id="customer-group"
-    )
-    print("[INFO] Kafka consumer initialized.")
-except Exception as e:
-    print(f"[ERROR] Failed to initialize Kafka consumer: {e}")
-    exit()
+# Connect to Kafka
+connected = False
+while not connected:
+    try:
+        consumer = KafkaConsumer(
+            KAFKA_TOPIC,
+            bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+            value_deserializer=lambda m: json.loads(m.decode("utf-8")),
+            auto_offset_reset="earliest",
+            enable_auto_commit=True,
+            group_id="customer-group"
+        )
+        print("[INFO] Kafka consumer initialized successfully.")
+        connected = True
+    except Exception as e:
+        print(f"[ERROR] Failed to initialize Kafka consumer: {e}")
+        print("[INFO] Retrying in 5 seconds...")
+        time.sleep(5)
 
 # Supabase PostgreSQL connection
 try:
@@ -29,47 +35,88 @@ try:
         port="5432",
         dbname="postgres",
         user="postgres",
-        password="Adminsaloni@10",  # 🔐 Replace this!
+        password="Adminsaloni@10",
         sslmode='require'
     )
     cursor = conn.cursor()
     print("[INFO] Connected to Supabase PostgreSQL.")
 except Exception as e:
     print(f"[ERROR] Failed to connect to PostgreSQL: {e}")
-    exit()
+    exit(1)
 
-# Create table if not exists
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS customers (
-    id SERIAL PRIMARY KEY,
-    name TEXT,
-    email TEXT,
-    country TEXT,
-    segment TEXT
-)
-""")
-conn.commit()
+# Create only customer_segments table if not exists
+try:
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS customer_segments (
+        record_id SERIAL PRIMARY KEY,
+        customer_id TEXT,
+        name TEXT,
+        age INTEGER,
+        purchase_amount DECIMAL(10,2),
+        cluster INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+    
+    conn.commit()
+    print("[INFO] customer_segments table checked/created.")
+except Exception as e:
+    print(f"[ERROR] Failed to create customer_segments table: {e}")
+    cursor.close()
+    conn.close()
+    exit(1)
 
-# Consume messages from Kafka
+# Simple segmentation logic
+def determine_cluster(purchase_amount):
+    if purchase_amount < 100:
+        return 0  # Low spenders
+    elif purchase_amount < 300:
+        return 1  # Medium spenders
+    else:
+        return 2  # High spenders
+
+# Start consuming messages
 print("[INFO] Waiting for messages...")
+
 try:
     for message in consumer:
         data = message.value
         print(f"[INFO] Received: {data}")
+
         try:
+            cluster = determine_cluster(data.get("purchase_amount", 0))
             cursor.execute(
-                "INSERT INTO customers (name, email, country, segment) VALUES (%s, %s, %s, %s)",
-                (data["name"], data["email"], data["country"], data["segment"])
+                """
+                INSERT INTO customer_segments
+                (customer_id, name, age, purchase_amount, cluster, created_at)
+                VALUES (%s, %s, %s, %s, %s, to_timestamp(%s))
+                """,
+                (
+                    data.get("customer_id"),
+                    data.get("name"),
+                    data.get("age"),
+                    data.get("purchase_amount"),
+                    cluster,
+                    data.get("timestamp")
+                )
             )
+
             conn.commit()
-            print("[INFO] Inserted into database.")
+            print(f"[✅] Inserted into customer_segments | Cluster: {cluster}")
+
         except Exception as db_err:
-            print(f"[ERROR] Failed to insert into DB: {db_err}")
+            print(f"[❌ ERROR] DB Insert Failed: {db_err}")
+            conn.rollback()
+
 except KeyboardInterrupt:
-    print("[INFO] Consumer stopped.")
+    print("[INFO] Consumer stopped by user.")
+except Exception as e:
+    print(f"[ERROR] Unexpected error: {e}")
 finally:
     cursor.close()
     conn.close()
     consumer.close()
+    print("[INFO] Resources closed.")
+
 
 
