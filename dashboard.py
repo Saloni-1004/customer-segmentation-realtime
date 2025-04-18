@@ -1,9 +1,12 @@
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from sqlalchemy import create_engine
 import time
 import hashlib
+import psycopg2
+import os
+from datetime import datetime, timedelta
 
 # Page configuration
 st.set_page_config(page_title="📊 Real-Time Customer Segmentation", layout="wide")
@@ -37,184 +40,140 @@ if not check_password():
     st.stop()
 
 # ---------------------------
-# 📊 Real-Time Dashboard Code
+# Database Connection Function
 # ---------------------------
+def get_connection():
+    # For local testing, use direct parameters
+    if "STREAMLIT_SHARING" not in os.environ:
+        return psycopg2.connect(
+            host="ep-divine-credit-a4zo7ml-pooler.us-east-1.aws.neon.tech",
+            port="5432",
+            dbname="neondb",
+            user="neondb_owner",
+            password="npg_N4VDg6bocCul",
+            sslmode='require'
+        )
+    # For Streamlit Cloud, use secrets
+    else:
+        return psycopg2.connect(**st.secrets["postgres"])
 
-# Get Supabase credentials from Streamlit secrets
-try:
-    # Use Streamlit secrets
-    db_pass = st.secrets["postgres"]["password"]
-    
-    # Use the connection pooler with port 6543 instead of direct connection with 5432
-    # Connection pooler often uses a different port (6543 is common for Supabase)
-    CONNECTION_STRING = f"postgresql://postgres:{db_pass}@db.fsulfssfgmgxosgpjjiw.supabase.co:6543/postgres?sslmode=require"
-    
-    # Create engine with minimal connection parameters
-    engine = create_engine(
-        CONNECTION_STRING,
-        connect_args={
-            "application_name": "streamlit_dashboard",
-            "options": "-c statement_timeout=30000"  # 30 second timeout
-        }
-    )
-    st.success("✅ Connected to database")
-except Exception as e:
-    # First connection attempt failed, try with Session Pooler
+# ---------------------------
+# 📊 Load data from Neon PostgreSQL
+# ---------------------------
+@st.cache_data(ttl=5)
+def load_data(hours=24, selected_clusters=None):
     try:
-        st.warning("⚠️ Direct connection failed, trying session pooler...")
+        conn = get_connection()
+        cursor = conn.cursor()
         
-        # Try a different pooler port - sometimes it's 5432 for session pooler
-        CONNECTION_STRING = f"postgresql://postgres:{db_pass}@db.fsulfssfgmgxosgpjjiw.supabase.co:5432/postgres?sslmode=require&pool=true"
+        # Build WHERE clause for filtering
+        where_clauses = []
+        params = []
         
-        engine = create_engine(CONNECTION_STRING)
-        st.success("✅ Connected to database using session pooler")
-    except Exception as e2:
-        st.error(f"⚠️ All connection attempts failed: {e2}")
-        st.info("Consider purchasing the IPv4 add-on in Supabase for better connectivity.")
-        st.stop()
-
-st.markdown("<h1>📊 Real-Time Customer Segmentation Dashboard</h1>", unsafe_allow_html=True)
-
-# Sidebar Filters
-st.sidebar.header("🔍 Filters")
-
-time_range = st.sidebar.slider("Select Time Range (Hours)", 0, 24, 1)
-from_time = pd.Timestamp.now() - pd.Timedelta(hours=time_range)
-
-# Get available clusters dynamically
-try:
-    clusters_df = pd.read_sql("SELECT DISTINCT cluster FROM customer_segments ORDER BY cluster", engine)
-    available_clusters = clusters_df['cluster'].tolist()
-    if not available_clusters:
-        available_clusters = [0, 1, 2]  # Default if no data
-except:
-    available_clusters = [0, 1, 2]  # Default if query fails
-
-clusters = st.sidebar.multiselect("Select Clusters", options=sorted(available_clusters), default=available_clusters)
-
-# Get purchase amount range dynamically
-try:
-    query = "SELECT COALESCE(MIN(purchase_amount), 0) as min, COALESCE(MAX(purchase_amount), 500) as max FROM customer_segments"
-    limits = pd.read_sql(query, engine).iloc[0]
-    purchase_min, purchase_max = limits['min'], limits['max']
-except:
-    purchase_min, purchase_max = 0, 500  # Default if query fails
-
-purchase_range = st.sidebar.slider(
-    "Purchase Amount Range",
-    min_value=float(purchase_min),
-    max_value=float(purchase_max),
-    value=(float(purchase_min), float(purchase_max))
-)
-
-auto_refresh = st.sidebar.checkbox("Enable Auto-Refresh (5s)", value=True)
-
-@st.cache_data(ttl=10)  # Cache for 10 seconds
-def load_data():
-    if not clusters:
-        return pd.DataFrame()  # Empty dataframe if no clusters selected
-    
-    # Use parameterized query with tuple for clusters
-    cluster_tuple = tuple(clusters) if len(clusters) > 1 else f"({clusters[0]})" if clusters else "(0)"
-    
-    query = f"""
-        SELECT record_id, customer_id, name, age, purchase_amount, cluster, created_at 
-        FROM customer_segments 
-        WHERE created_at >= '{from_time}' 
-        AND cluster IN {cluster_tuple}
-        AND purchase_amount BETWEEN {purchase_range[0]} AND {purchase_range[1]}
-        ORDER BY created_at DESC LIMIT 100
-    """
-    
-    try:
-        return pd.read_sql(query, engine)
+        # Filter by time if specified
+        if hours > 0:
+            where_clauses.append("created_at > %s")
+            params.append(datetime.now() - timedelta(hours=hours))
+            
+        # Filter by clusters if specified
+        if selected_clusters and len(selected_clusters) > 0:
+            placeholders = ', '.join(['%s'] * len(selected_clusters))
+            where_clauses.append(f"cluster IN ({placeholders})")
+            params.extend(selected_clusters)
+            
+        # Construct the full query
+        query = "SELECT * FROM customer_segments"
+        if where_clauses:
+            query += " WHERE " + " AND ".join(where_clauses)
+        
+        # Execute query
+        cursor.execute(query, params)
+        columns = [desc[0] for desc in cursor.description]
+        data = cursor.fetchall()
+        
+        # Close connection
+        cursor.close()
+        conn.close()
+        
+        # Convert to DataFrame
+        df = pd.DataFrame(data, columns=columns)
+        return df
+        
     except Exception as e:
-        st.error(f"Error loading data: {e}")
+        st.error(f"Database error: {e}")
         return pd.DataFrame()
 
-def render_dashboard(df):
-    col1, col2 = st.columns(2)
+# ---------------------------
+# 🔍 Sidebar Filters
+# ---------------------------
+st.sidebar.header("🔍 Filters")
+time_range = st.sidebar.slider("Select Time Range (Hours)", 0, 24, 1)
+clusters = st.sidebar.multiselect("Select Clusters", options=[0, 1, 2], default=[0, 1, 2])
 
-    with col1:
-        st.subheader("💰 Cluster-wise Purchase Distribution")
-        fig1 = px.bar(df, x="cluster", y="purchase_amount", color="cluster", 
-                      title="Average Purchase by Cluster")
-        st.plotly_chart(fig1, use_container_width=True)
+# ---------------------------
+# 📋 Load and render data
+# ---------------------------
+df = load_data(hours=time_range, selected_clusters=clusters)
 
-    with col2:
-        st.subheader("👤 Age Distribution by Cluster")
-        fig2 = px.histogram(df, x="age", color="cluster", barmode="overlay",
-                           title="Customer Age Distribution by Cluster")
-        st.plotly_chart(fig2, use_container_width=True)
-
-    col3, col4 = st.columns(2)
-
-    with col3:
-        st.subheader("👥 Total Customers Per Cluster")
-        cluster_counts = df["cluster"].value_counts().reset_index()
-        cluster_counts.columns = ["Cluster", "Total Customers"]
-        fig3 = px.pie(cluster_counts, values="Total Customers", names="Cluster",
-                     title="Customer Distribution Across Clusters")
-        st.plotly_chart(fig3, use_container_width=True)
-
-    with col4:
-        st.subheader("💸 Average Purchase Per Cluster")
-        avg_purchase = df.groupby("cluster")["purchase_amount"].mean().reset_index()
-        fig4 = px.bar(avg_purchase, x="cluster", y="purchase_amount", color="cluster",
-                     title="Average Spending by Customer Segment")
-        st.plotly_chart(fig4, use_container_width=True)
-
-    st.subheader("📋 Latest Customer Data")
-    st.dataframe(df[["customer_id", "name", "age", "purchase_amount", "cluster", "created_at"]].style.format({
-        "purchase_amount": "${:.2f}"
-    }))
-
-    # Insights
-    col5, col6 = st.columns(2)
-    with col5:
-        if df["purchase_amount"].max() > 400:
-            st.error("⚠️ Alert: High purchase amount detected!")
-        
-        if df["cluster"].value_counts().get(2, 0) > df["cluster"].value_counts().get(0, 0):
-            st.success("✅ More high-value customers than low-value ones!")
-    
-    with col6:
-        st.metric("Total Revenue", f"${df['purchase_amount'].sum():.2f}", 
-                 delta=f"{len(df)} customers")
-
-    if st.download_button("📅 Download Data as CSV", df.to_csv(index=False), "customer_segments.csv", "text/csv"):
-        st.success("Data downloaded successfully!")
-
-# Main app logic
-if auto_refresh:
-    df = load_data()
-    if df.empty:
-        st.warning("⚠️ No data available yet. Make sure the producer and consumer are running.")
-    else:
-        render_dashboard(df)
-    
-    # Add auto-refresh using JavaScript (note: this might not work in all Streamlit deployments)
-    st.markdown(
-        """
-        <script>
-        setTimeout(function(){
-            window.location.reload();
-        }, 5000);
-        </script>
-        """,
-        unsafe_allow_html=True
-    )
+if df.empty:
+    st.warning("⚠️ No data available. Check database connection or data filters.")
 else:
-    if st.button("🔄 Refresh Data"):
-        st.cache_data.clear()  # Clear cache to ensure fresh data
-        df = load_data()
-        if df.empty:
-            st.warning("⚠️ No data available or no clusters selected.")
-        else:
-            render_dashboard(df)
-    else:
-        df = load_data()
-        if df.empty:
-            st.warning("⚠️ No data available or no clusters selected.")
-        else:
-            render_dashboard(df)
+    st.markdown("<h1>📊 Customer Segmentation Dashboard</h1>", unsafe_allow_html=True)
+    
+    # Show totals
+    total_customers = len(df)
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total Customers", total_customers)
+    col2.metric("Average Purchase", f"${df['purchase_amount'].mean():.2f}")
+    col3.metric("Average Age", f"{df['age'].mean():.1f}")
+    
+    # Charts and data
+    chart_col, data_col = st.columns(2)
+    
+    with chart_col:
+        st.subheader("👥 Customers Per Cluster")
+        cluster_counts = df.groupby('cluster').size().reset_index(name='count')
+        fig1 = px.bar(
+            cluster_counts, 
+            x="cluster", 
+            y="count", 
+            color="cluster", 
+            labels={"cluster": "Cluster", "count": "Number of Customers"},
+            title="Customer Distribution by Segment",
+            color_discrete_sequence=px.colors.qualitative.Set1
+        )
+        st.plotly_chart(fig1, use_container_width=True)
+        
+        # Add spending by cluster chart
+        st.subheader("💰 Average Spending by Cluster")
+        avg_spending = df.groupby('cluster')['purchase_amount'].mean().reset_index()
+        fig2 = px.bar(
+            avg_spending,
+            x="cluster",
+            y="purchase_amount",
+            color="cluster",
+            labels={"cluster": "Cluster", "purchase_amount": "Average Purchase ($)"},
+            title="Average Customer Spending by Segment",
+            color_discrete_sequence=px.colors.qualitative.Set1
+        )
+        st.plotly_chart(fig2, use_container_width=True)
+        
+    with data_col:
+        st.subheader("📋 Latest Customer Data")
+        display_df = df[["customer_id", "name", "age", "purchase_amount", "cluster", "created_at"]]
+        
+        if 'created_at' in display_df.columns and not display_df.empty:
+            display_df['created_at'] = pd.to_datetime(display_df['created_at']).dt.strftime('%Y-%m-%d %H:%M:%S')
+            
+        st.dataframe(
+            display_df.sort_values(by='created_at', ascending=False),
+            height=400,
+            use_container_width=True
+        )
+
+# ---------------------------
+# 💾 Auto-refresh
+# ---------------------------
+if st.sidebar.checkbox("Enable Auto-Refresh (5s)", value=True):
+    time.sleep(5)
+    st.rerun()
