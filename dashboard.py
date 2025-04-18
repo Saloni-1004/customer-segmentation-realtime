@@ -46,17 +46,15 @@ if not check_password():
 # Database Connection Function
 # ---------------------------
 def get_connection():
-    # For local testing, use direct parameters
     if "STREAMLIT_SHARING" not in os.environ:
         return psycopg2.connect(
-            host="ep-divine-credit-a4zo7ml-pooler.us-east-1.aws.neon.tech",
-            port="5432",
-            dbname="neondb",
-            user="neondb_owner",
-            password="npg_dzr6wpmcY8AM",
+            host=os.getenv("PGHOST", "localhost"),  # Default fallback
+            port=os.getenv("PGPORT", "5432"),
+            dbname=os.getenv("PGDATABASE", "neondb"),
+            user=os.getenv("PGUSER", "neondb_owner"),
+            password=os.getenv("PGPASSWORD"),      # Removed default empty string
             sslmode='require'
         )
-    # For Streamlit Cloud, use secrets
     else:
         return psycopg2.connect(**st.secrets["postgres"])
 
