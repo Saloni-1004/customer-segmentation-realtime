@@ -28,18 +28,18 @@ while not connected:
         print("[INFO] Retrying in 5 seconds...")
         time.sleep(5)
 
-# Supabase PostgreSQL connection
+# Neon PostgreSQL connection
 try:
     conn = psycopg2.connect(
-        host="db.fsulfssfgmgxosgpjjiw.supabase.co",
+        host="ep-divine-credit-a4zo7ml-pooler.us-east-1.aws.neon.tech",
         port="5432",
-        dbname="postgres",
-        user="postgres",
-        password="Adminsaloni@10",
+        dbname="neondb",
+        user="neondb_owner",
+        password="npg_N4VDg6bocCul",
         sslmode='require'
     )
     cursor = conn.cursor()
-    print("[INFO] Connected to Supabase PostgreSQL.")
+    print("[INFO] Connected to Neon PostgreSQL.")
 except Exception as e:
     print(f"[ERROR] Failed to connect to PostgreSQL: {e}")
     exit(1)
