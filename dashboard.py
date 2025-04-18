@@ -53,7 +53,7 @@ def get_connection():
             port="5432",
             dbname="neondb",
             user="neondb_owner",
-            password="npg_N4VDg6bocCul",
+            password="npg_dzr6wpmcY8AM",
             sslmode='require'
         )
     # For Streamlit Cloud, use secrets
