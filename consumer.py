@@ -57,66 +57,32 @@ try:
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
-    
-    conn.commit()
-    print("[INFO] customer_segments table checked/created.")
+    conn.commit()  # Commit the table creation
+    print("[INFO] customer_segments table ensured.")
 except Exception as e:
     print(f"[ERROR] Failed to create customer_segments table: {e}")
-    cursor.close()
-    conn.close()
     exit(1)
 
-# Simple segmentation logic
-def determine_cluster(purchase_amount):
-    if purchase_amount < 100:
-        return 0  # Low spenders
-    elif purchase_amount < 300:
-        return 1  # Medium spenders
-    else:
-        return 2  # High spenders
-
-# Start consuming messages
-print("[INFO] Waiting for messages...")
-
+# Consume messages from Kafka and insert into PostgreSQL
 try:
     for message in consumer:
-        data = message.value
-        print(f"[INFO] Received: {data}")
+        # Extract data from Kafka message
+        customer_data = message.value
 
-        try:
-            cluster = determine_cluster(data.get("purchase_amount", 0))
-            cursor.execute(
-                """
-                INSERT INTO customer_segments
-                (customer_id, name, age, purchase_amount, cluster, created_at)
-                VALUES (%s, %s, %s, %s, %s, to_timestamp(%s))
-                """,
-                (
-                    data.get("customer_id"),
-                    data.get("name"),
-                    data.get("age"),
-                    data.get("purchase_amount"),
-                    cluster,
-                    data.get("timestamp")
-                )
-            )
+        # Example of inserting data into PostgreSQL
+        cursor.execute("""
+        INSERT INTO customer_segments (customer_id, name, age, purchase_amount, cluster)
+        VALUES (%s, %s, %s, %s, %s)
+        """, (
+            customer_data["customer_id"],
+            customer_data["name"],
+            customer_data["age"],
+            customer_data["purchase_amount"],
+            customer_data["cluster"]
+        ))
+        conn.commit()  # Commit the insert to the database
+        print(f"[INFO] Inserted data for customer_id: {customer_data['customer_id']}")
 
-            conn.commit()
-            print(f"[✅] Inserted into customer_segments | Cluster: {cluster}")
-
-        except Exception as db_err:
-            print(f"[❌ ERROR] DB Insert Failed: {db_err}")
-            conn.rollback()
-
-except KeyboardInterrupt:
-    print("[INFO] Consumer stopped by user.")
 except Exception as e:
-    print(f"[ERROR] Unexpected error: {e}")
-finally:
-    cursor.close()
-    conn.close()
-    consumer.close()
-    print("[INFO] Resources closed.")
-
-
-
+    print(f"[ERROR] Failed to consume message from Kafka or insert into PostgreSQL: {e}")
+    exit(1)
