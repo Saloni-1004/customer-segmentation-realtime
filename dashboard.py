@@ -17,20 +17,24 @@ def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
 def check_password():
+    """Check if the user has entered the correct password."""
     if "password_correct" not in st.session_state:
         st.session_state["password_correct"] = False
 
     def password_entered():
-        if "password" in st.session_state:
+        """Handle password input and validate it."""
+        if "password" in st.session_state:  # Check if password exists in session state
             if hash_password(st.session_state["password"]) == hash_password("admin123"):
                 st.session_state["password_correct"] = True
-                del st.session_state["password"]
+                if "password" in st.session_state:  # Check again before deleting
+                    del st.session_state["password"]
             else:
                 st.session_state["password_correct"] = False
 
     if not st.session_state["password_correct"]:
         st.text_input("🔐 Enter Password", type="password", on_change=password_entered, key="password")
-        st.stop()
+        return False
+    return True
 
 if not check_password():
     st.stop()
