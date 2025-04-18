@@ -3,6 +3,7 @@ import psycopg2
 from kafka import KafkaConsumer
 import time
 import logging
+import os
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -41,11 +42,11 @@ cursor = None
 for attempt in range(max_retries):
     try:
         conn = psycopg2.connect(
-            host="ep-divine-credit-a4zo7ml-pooler.us-east-1.aws.neon.tech",
-            port="5432",
-            dbname="neondb",
-            user="neondb_owner",
-            password="npg_dzr6wpmcY8AM",  # Replace with new password if reset
+            host=os.getenv("PGHOST", "localhost"),  # Default to localhost if not set
+            port=os.getenv("PGPORT", "5432"),      # Default to 5432 if not set
+            dbname=os.getenv("PGDATABASE", "neondb"),
+            user=os.getenv("PGUSER", "neondb_owner"),
+            password=os.getenv("PGPASSWORD"),      # Removed default empty string
             sslmode='require'
         )
         cursor = conn.cursor()
@@ -95,11 +96,12 @@ logger.info("Waiting for messages...")
 try:
     for message in consumer:
         data = message.value
-        logger.info(f"Received: {data}")
+        logger.info(f"Received message: {data}")
 
         try:
-            # Determine customer cluster based on purchase_amount
-            cluster = determine_cluster(data.get("purchase_amount", 0))
+            # Determine customer cluster based on segment or purchase_amount
+            segment = data.get("segment", "Segment-0")  # Default to Segment-0 if missing
+            cluster = int(segment.split('-')[1]) if segment.startswith("Segment-") else determine_cluster(data.get("purchase_amount", 0))
             # Use current timestamp if data.get("timestamp") is missing or invalid
             timestamp = data.get("timestamp")
             if not timestamp or not isinstance(timestamp, (int, float, str)):
