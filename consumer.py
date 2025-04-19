@@ -4,11 +4,11 @@ from kafka import KafkaConsumer
 import time
 import logging
 import os
-from datetime import datetime, timezone
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
 logger.info("Consumer script starting...")
 
 # Kafka setup
@@ -34,7 +34,7 @@ while not connected_kafka:
         logger.info("Retrying in 5 seconds...")
         time.sleep(5)
 
-# PostgreSQL connection (Neon)
+# Neon PostgreSQL connection with retry
 max_retries = 5
 retry_delay = 5
 conn = None
@@ -42,25 +42,25 @@ cursor = None
 for attempt in range(max_retries):
     try:
         conn = psycopg2.connect(
-            host=os.getenv("PGHOST", "localhost"),
-            port=os.getenv("PGPORT", "5432"),
+            host=os.getenv("PGHOST", "localhost"),  # Default to localhost if not set
+            port=os.getenv("PGPORT", "5432"),      # Default to 5432 if not set
             dbname=os.getenv("PGDATABASE", "neondb"),
             user=os.getenv("PGUSER", "neondb_owner"),
-            password=os.getenv("PGPASSWORD"),
+            password=os.getenv("PGPASSWORD"),      # Removed default empty string
             sslmode='require'
         )
         cursor = conn.cursor()
         logger.info("Connected to Neon PostgreSQL successfully.")
         break
     except Exception as e:
-        logger.error(f"PostgreSQL connection failed (attempt {attempt + 1}): {e}")
+        logger.error(f"Failed to connect to PostgreSQL (attempt {attempt + 1}/{max_retries}): {e}")
         if attempt < max_retries - 1:
             time.sleep(retry_delay)
         else:
             logger.critical("Max retries reached. Exiting.")
             exit(1)
 
-# Create table if not exists
+# Create customer_segments table if not exists
 try:
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS customer_segments (
@@ -70,7 +70,7 @@ try:
         age INTEGER,
         purchase_amount DECIMAL(10,2),
         cluster INTEGER,
-        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
     conn.commit()
@@ -79,35 +79,38 @@ except Exception as e:
     logger.error(f"Failed to create customer_segments table: {e}")
     exit(1)
 
-# Cluster logic
+# Simple segmentation logic
 def determine_cluster(purchase_amount):
     if purchase_amount is None:
         return 0
     if purchase_amount < 100:
-        return 0
+        return 0  # Low spenders
     elif purchase_amount < 300:
-        return 1
+        return 1  # Medium spenders
     else:
-        return 2
+        return 2  # High spenders
 
-# Start consuming
+# Start consuming messages
 logger.info("Waiting for messages...")
+
 try:
     for message in consumer:
         data = message.value
         logger.info(f"Received message: {data}")
 
         try:
-            segment = data.get("segment", "Segment-0")
+            # Determine customer cluster based on segment or purchase_amount
+            segment = data.get("segment", "Segment-0")  # Default to Segment-0 if missing
             cluster = int(segment.split('-')[1]) if segment.startswith("Segment-") else determine_cluster(data.get("purchase_amount", 0))
-
-            created_at = datetime.now(timezone.utc)  # ✅ Correct UTC datetime
-
+            # Use current timestamp if data.get("timestamp") is missing or invalid
+            timestamp = data.get("timestamp")
+            if not timestamp or not isinstance(timestamp, (int, float, str)):
+                timestamp = time.time()
             cursor.execute(
                 """
                 INSERT INTO customer_segments
                 (customer_id, name, age, purchase_amount, cluster, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, to_timestamp(%s))
                 """,
                 (
                     data.get("customer_id", ""),
@@ -115,7 +118,7 @@ try:
                     data.get("age", 0),
                     data.get("purchase_amount", 0.0),
                     cluster,
-                    created_at
+                    timestamp
                 )
             )
             conn.commit()
@@ -136,4 +139,5 @@ finally:
         conn.close()
     if consumer:
         consumer.close()
-    logger.info("Resources closed.")
+
+    logger.info("Resources closed.") 
