@@ -13,6 +13,8 @@ if 'refresh_count' not in st.session_state:
     st.session_state.refresh_count = 0
 if 'df' not in st.session_state:
     st.session_state.df = pd.DataFrame()
+if 'last_timestamp' not in st.session_state:
+    st.session_state.last_timestamp = None
 
 # PostgreSQL Connection for Neon.tech
 DB_HOST = "ep-dry-violet-a4v38rh7-pooler.us-east-1.aws.neon.tech"
@@ -152,7 +154,6 @@ total_rows = check_table_count()
 st.sidebar.markdown(f"**Debug Info**: Total rows in customer_segments: {total_rows}")
 
 # Data fetching function
-@st.cache_data(ttl=5)
 def fetch_data(_from_time, _clusters, _purchase_min, _purchase_max):
     query = """
         SELECT record_id, customer_id, name, age, purchase_amount, cluster, created_at 
@@ -165,7 +166,11 @@ def fetch_data(_from_time, _clusters, _purchase_min, _purchase_max):
     # Log query for debugging
     st.sidebar.markdown("**Debug Query**:")
     st.sidebar.code(query % (_from_time, tuple(_clusters) if _clusters else (0, 1, 2), _purchase_min, _purchase_max))
-    return pd.read_sql(query, engine, params=(_from_time, tuple(_clusters) if _clusters else (0, 1, 2), _purchase_min, _purchase_max))
+    df = pd.read_sql(query, engine, params=(_from_time, tuple(_clusters) if _clusters else (0, 1, 2), _purchase_min, _purchase_max))
+    # Update last timestamp if new data is fetched
+    if not df.empty and (st.session_state.last_timestamp is None or df['created_at'].max() > st.session_state.last_timestamp):
+        st.session_state.last_timestamp = df['created_at'].max()
+    return df
 
 # Create a container to hold the dashboard content
 dashboard_container = st.empty()
@@ -176,7 +181,7 @@ def render_dashboard(df):
             st.warning("⚠️ No data available yet. Waiting for new messages...")
             st.markdown(f"**Debug Info**: Fetched {len(df)} rows. Check filters or database data.")
         else:
-            st.success(f"**Debug Info**: Successfully fetched {len(df)} rows.")
+            st.success(f"**Debug Info**: Successfully fetched {len(df)} rows. Latest timestamp: {st.session_state.last_timestamp}")
             # Dashboard Layout
             col1, col2 = st.columns(2)
 
@@ -271,14 +276,18 @@ if auto_refresh:
     current_time = time.time()
     if current_time - st.session_state.last_refresh >= 5:
         st.cache_data.clear()
-        st.session_state.df = fetch_data(from_time, clusters, purchase_min, purchase_max)
+        new_df = fetch_data(from_time, clusters, purchase_min, purchase_max)
+        if not new_df.empty:
+            st.session_state.df = new_df
         render_dashboard(st.session_state.df)
         st.session_state.last_refresh = current_time
         st.session_state.refresh_count += 1
 else:
     if st.button("🔄 Refresh Data"):
         st.cache_data.clear()
-        st.session_state.df = fetch_data(from_time, clusters, purchase_min, purchase_max)
+        new_df = fetch_data(from_time, clusters, purchase_min, purchase_max)
+        if not new_df.empty:
+            st.session_state.df = new_df
         render_dashboard(st.session_state.df)
     else:
         if st.session_state.df.empty:
