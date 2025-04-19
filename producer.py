@@ -3,6 +3,8 @@ import json
 import time
 import requests
 import logging
+import random
+from datetime import datetime
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -33,6 +35,39 @@ def fetch_fake_store_api():
         logger.error(f"Failed to fetch data from Fake Store API: {e}")
         return []
 
+# Simulate realistic customer data
+def generate_customer_data(user):
+    customer_id = str(user.get("id", 0))
+    name = {"firstname": user["name"]["firstname"], "lastname": user["name"]["lastname"]}
+    
+    # Realistic age between 18 and 80
+    age = random.randint(18, 80)
+    
+    # Realistic purchase amount with slight variation and occasional large purchase
+    base_amount = random.uniform(10, 1000)
+    purchase_amount = round(base_amount + random.uniform(-50, 50), 2)  # Add some fluctuation
+    if random.random() < 0.1:  # 10% chance of a large purchase
+        purchase_amount = round(purchase_amount + random.uniform(1000, 5000), 2)
+    
+    # Segment based on purchase amount
+    if purchase_amount < 100:
+        segment = "Segment-0"  # Low spenders
+    elif purchase_amount < 500:
+        segment = "Segment-1"  # Medium spenders
+    else:
+        segment = "Segment-2"  # High spenders
+    
+    return {
+        "id": customer_id,
+        "customer_id": customer_id,
+        "name": name,
+        "email": user.get("email", ""),
+        "age": age,
+        "purchase_amount": purchase_amount,
+        "segment": segment,
+        "timestamp": time.time()
+    }
+
 logger.info("Starting data production loop...")
 while True:
     users = fetch_fake_store_api()
@@ -44,25 +79,12 @@ while True:
     
     for user in users:
         try:
-            # Prepare data from Fake Store API
-            data = {
-                "id": str(user.get("id", 0)),
-                "customer_id": str(user.get("id", 0)),  # Use ID as customer_id
-                "name": {"firstname": user["name"]["firstname"], "lastname": user["name"]["lastname"]},
-                "email": user.get("email", ""),
-                "age": 0,  # Fake Store API doesn't provide age, set to 0 or fetch from another source if available
-                "purchase_amount": round(abs(hash(user["email"])) % 1000 / 10, 2),  # Generate pseudo-random purchase amount
-                "segment": f"Segment-{abs(hash(user['email'])) % 3}",  # Assign random segment
-                "timestamp": time.time()
-            }
-            
-            # Send to Kafka
+            data = generate_customer_data(user)
             producer.send('customer-data', value=data)
-            logger.info(f"Sent: Customer ID: {data['customer_id']}, Name: {data['name']['firstname']} {data['name']['lastname']}, Amount: ${data['purchase_amount']}")
+            logger.info(f"Sent: Customer ID: {data['customer_id']}, Name: {data['name']['firstname']} {data['name']['lastname']}, Age: {data['age']}, Amount: ${data['purchase_amount']}")
         except Exception as e:
             logger.error(f"Error processing user data: {e}")
     
-    # Wait before fetching the next batch
     logger.info(f"Processed {len(users)} users. Waiting 5 seconds before next batch...")
     time.sleep(5)
 
