@@ -6,10 +6,7 @@ import hashlib
 import psycopg2
 from datetime import datetime, timezone, timedelta
 
-# ---------------------------
-# 🔐 Simple Login Function
-# ---------------------------
-
+# Auth
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
@@ -28,18 +25,19 @@ def check_password():
         st.text_input("🔐 Enter Password", type="password", on_change=password_entered, key="password")
         st.stop()
 
-# Authenticate
 check_password()
+st.set_page_config(page_title="📊 Real-Time Dashboard", layout="wide")
+st.title("📊 Real-Time Customer Segmentation")
 
-# ---------------------------
-# 🎨 Page Config
-# ---------------------------
-st.set_page_config(page_title="📊 Real-Time Customer Segmentation", layout="wide")
-st.title("📊 Real-Time Customer Segmentation Dashboard")
+# Auto-refresh setup
+if "last_refresh" not in st.session_state:
+    st.session_state["last_refresh"] = time.time()
+if st.sidebar.checkbox("Enable Auto-Refresh (5s)", value=True):
+    if time.time() - st.session_state["last_refresh"] > 5:
+        st.session_state["last_refresh"] = time.time()
+        st.rerun()
 
-# ---------------------------
-# 🧠 PostgreSQL Connection
-# ---------------------------
+# DB Connect
 try:
     conn = psycopg2.connect(
         host="ep-dry-violet-a4v38rh7-pooler.us-east-1.aws.neon.tech",
@@ -51,73 +49,61 @@ try:
     )
     cursor = conn.cursor()
 except Exception as e:
-    st.error(f"❌ Failed to connect to PostgreSQL: {e}")
+    st.error(f"Database connection error: {e}")
     st.stop()
 
-# ---------------------------
-# ⏱️ Sidebar Filters
-# ---------------------------
-st.sidebar.header("🔍 Filters")
-
-# Auto-refresh
-if "last_refresh" not in st.session_state:
-    st.session_state["last_refresh"] = time.time()
-
-auto_refresh = st.sidebar.checkbox("Enable Auto-Refresh (5s)", value=True)
-
-if auto_refresh:
-    if time.time() - st.session_state["last_refresh"] > 5:
-        st.session_state["last_refresh"] = time.time()
-        st.rerun()
-
-# Time filter
-time_range_hours = st.sidebar.slider("Time Range (Last N Hours)", 1, 168, 48)
-from_time = datetime.now(timezone.utc) - timedelta(hours=time_range_hours)
-
-# Cluster filter
+# Filters
+st.sidebar.header("Filters")
+hours = st.sidebar.slider("Last N Hours", 1, 168, 24)
+from_time = datetime.now(timezone.utc) - timedelta(hours=hours)
 clusters = st.sidebar.multiselect("Clusters", [0, 1, 2], default=[0, 1, 2])
 
-# ---------------------------
-# 📥 Data Fetch
-# ---------------------------
-query = """
+# Data Query
+cursor.execute("""
     SELECT record_id, customer_id, name, age, purchase_amount, cluster, created_at
     FROM customer_segments
     WHERE created_at >= %s AND cluster = ANY(%s)
     ORDER BY created_at DESC
     LIMIT 200
-"""
-cursor.execute(query, (from_time, clusters))
+""", (from_time, clusters))
+
 rows = cursor.fetchall()
 columns = ["record_id", "customer_id", "name", "age", "purchase_amount", "cluster", "created_at"]
 df = pd.DataFrame(rows, columns=columns)
 
-# ---------------------------
-# 📊 Show Metrics and Charts
-# ---------------------------
+# Charts
 if df.empty:
-    st.warning("⚠️ No data found for the selected filter/time range.")
+    st.warning("⚠️ No data found.")
 else:
     col1, col2, col3 = st.columns(3)
-    col1.metric("🧍 Total Customers", len(df))
-    col2.metric("💰 Total Purchase", f"${df['purchase_amount'].sum():,.2f}")
-    col3.metric("🕒 Latest Entry", df['created_at'].max().strftime("%Y-%m-%d %H:%M:%S"))
+    col1.metric("👥 Customers", len(df))
+    col2.metric("💸 Revenue", f"${df['purchase_amount'].sum():,.2f}")
+    col3.metric("🕒 Last Entry", df["created_at"].max().strftime("%Y-%m-%d %H:%M:%S"))
 
-    # Scatter Chart
-    fig1 = px.scatter(df, x="age", y="purchase_amount", color="cluster", hover_data=["name", "customer_id"])
-    fig1.update_layout(title="🎯 Age vs Purchase by Cluster")
+    # Chart 1: Scatter Age vs Purchase
+    st.subheader("🎯 Age vs Purchase by Cluster")
+    fig1 = px.scatter(df, x="age", y="purchase_amount", color="cluster", hover_data=["name"])
     st.plotly_chart(fig1, use_container_width=True)
 
-    # Pie Chart
-    cluster_counts = df["cluster"].value_counts().reset_index()
-    cluster_counts.columns = ["Cluster", "Count"]
-    fig2 = px.pie(cluster_counts, names="Cluster", values="Count", title="👥 Cluster Distribution")
+    # Chart 2: Pie Chart
+    st.subheader("📊 Cluster Distribution")
+    fig2 = px.pie(df, names="cluster", title="Customer Clusters")
     st.plotly_chart(fig2, use_container_width=True)
 
+    # Chart 3: Bar Chart Avg Purchase
+    st.subheader("💰 Avg Purchase per Cluster")
+    avg_df = df.groupby("cluster")["purchase_amount"].mean().reset_index()
+    fig3 = px.bar(avg_df, x="cluster", y="purchase_amount", color="cluster")
+    st.plotly_chart(fig3, use_container_width=True)
+
+    # Chart 4: Histogram - Age
+    st.subheader("📈 Age Distribution")
+    fig4 = px.histogram(df, x="age", nbins=10, color="cluster")
+    st.plotly_chart(fig4, use_container_width=True)
+
     # Data Table
-    with st.expander("📋 View Raw Data"):
-        st.dataframe(df, use_container_width=True)
+    with st.expander("📋 Raw Data"):
+        st.dataframe(df)
 
-    # Download Option
-    st.download_button("📥 Download as CSV", df.to_csv(index=False), "customer_segments.csv", "text/csv")
-
+    # Download
+    st.download_button("⬇ Download CSV", df.to_csv(index=False), "data.csv", "text/csv")
