@@ -264,7 +264,7 @@ def render_dashboard(df):
 if auto_refresh:
     current_time = time.time()
     if current_time - st.session_state.last_refresh >= 5:
-        st.cache W (data).clear()
+        st.cache_data.clear()
         df = fetch_data(from_time, clusters, purchase_min, purchase_max)
         render_dashboard(df)
         st.session_state.last_refresh = current_time
