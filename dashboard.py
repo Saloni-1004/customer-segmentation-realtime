@@ -37,7 +37,7 @@ st.title("📊 Real-Time Customer Segmentation Dashboard")
 st.sidebar.header("🔍 Filters")
 auto_refresh = st.sidebar.checkbox("Enable Auto-Refresh (5s)", value=True)
 
-# Time range
+# Time range (dynamic to include latest data)
 time_range = st.sidebar.slider("Time Range (hours)", 1, 168, 48)
 if st.session_state.last_timestamp:
     from_time = st.session_state.last_timestamp - pd.Timedelta(hours=time_range)
@@ -61,7 +61,7 @@ try:
 except:
     purchase_min, purchase_max = 0.0, 1000.0
 
-# Fetch data function
+# Fetch data function with debug
 def fetch_data(_from_time, _clusters, _purchase_min, _purchase_max):
     query = """
         SELECT record_id, customer_id, name, age, purchase_amount, cluster, created_at
@@ -72,25 +72,25 @@ def fetch_data(_from_time, _clusters, _purchase_min, _purchase_max):
         ORDER BY created_at DESC
         LIMIT 100
     """
+    st.sidebar.markdown(f"**Debug Query Time**: {time.time()}")
     df = pd.read_sql(query, engine, params=(_from_time, tuple(_clusters), _purchase_min, _purchase_max))
-    if not df.empty:
+    st.sidebar.markdown(f"**Debug Fetch Time**: {time.time()} - Rows: {len(df)}")
+    if not df.empty and (st.session_state.last_timestamp is None or df['created_at'].max() > st.session_state.last_timestamp):
         st.session_state.last_timestamp = df['created_at'].max()
     return df
 
-# Spinner & main display logic
-with st.spinner("Running... Fetching real-time data..."):
-    if auto_refresh:
-        if time.time() - st.session_state['autorefresh'] > 5:
-            st.session_state['autorefresh'] = time.time()
-            df = fetch_data(from_time, clusters, purchase_min, purchase_max)
-            if not df.empty:
-                st.session_state.df = df
-            st.experimental_rerun()
-    else:
-        if st.button("🔄 Manual Refresh"):
-            df = fetch_data(from_time, clusters, purchase_min, purchase_max)
-            if not df.empty:
-                st.session_state.df = df
+# Main display logic
+with st.spinner("Fetching real-time data..."):
+    if auto_refresh and time.time() - st.session_state['autorefresh'] >= 5:
+        st.session_state['autorefresh'] = time.time()
+        new_df = fetch_data(from_time, clusters, purchase_min, purchase_max)
+        if not new_df.empty:
+            st.session_state.df = new_df
+
+    if st.button("🔄 Manual Refresh"):
+        new_df = fetch_data(from_time, clusters, purchase_min, purchase_max)
+        if not new_df.empty:
+            st.session_state.df = new_df
 
 df = st.session_state.df
 
@@ -126,4 +126,3 @@ else:
     st.dataframe(df)
 
     st.download_button("⬇ Download CSV", df.to_csv(index=False), "customer_segments.csv", "text/csv")
-
