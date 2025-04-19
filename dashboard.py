@@ -6,6 +6,9 @@ import urllib.parse
 import time
 from datetime import timezone
 
+# Streamlit Page Config must be the first Streamlit command
+st.set_page_config(page_title="📊 Real-Time Customer Segmentation", layout="wide")
+
 # Initialize session state for refresh timing and data
 if 'last_refresh' not in st.session_state:
     st.session_state.last_refresh = time.time()
@@ -26,14 +29,9 @@ DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NA
 
 try:
     engine = create_engine(DATABASE_URL)
-    # Health check to keep the app alive
-    st.write("Running...")
 except Exception as e:
     st.error(f"⚠️ Database connection failed: {e}")
     st.stop()
-
-# Streamlit Page Config
-st.set_page_config(page_title="📊 Real-Time Customer Segmentation", layout="wide")
 
 # Custom CSS for Styling
 st.markdown(
