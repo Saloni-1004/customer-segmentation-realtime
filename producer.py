@@ -1,7 +1,6 @@
 from kafka import KafkaProducer
 import json
 import time
-import random
 import requests
 import logging
 
@@ -9,10 +8,10 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Initialize Kafka producer - running locally
+# Initialize Kafka producer
 try:
     producer = KafkaProducer(
-        bootstrap_servers='localhost:9092',
+        bootstrap_servers='localhost:9092',  # Update if Kafka is deployed elsewhere
         value_serializer=lambda v: json.dumps(v).encode('utf-8')
     )
     logger.info("Kafka producer initialized successfully")
@@ -25,17 +24,14 @@ def fetch_fake_store_api():
     try:
         response = requests.get("https://fakestoreapi.com/users", timeout=10)
         if response.status_code == 200:
-            logger.info(f"Successfully fetched {len(response.json())} users from Fake Store API")
-            return response.json()
+            users = response.json()
+            logger.info(f"Successfully fetched {len(users)} users from Fake Store API")
+            return users
         logger.warning(f"API returned status code {response.status_code}")
         return []
     except Exception as e:
         logger.error(f"Failed to fetch data from Fake Store API: {e}")
         return []
-
-# Counters for customer_id and name uniqueness
-customer_id_counter = 1
-name_counter = 1
 
 logger.info("Starting data production loop...")
 while True:
@@ -48,29 +44,21 @@ while True:
     
     for user in users:
         try:
-            customer_id = str(customer_id_counter)
-            # Safely extract first name
-            firstname = user.get('name', {}).get('firstname', f"User{customer_id}")
-            unique_name = f"{firstname}_{name_counter}"
-            
-            # Create customer data with values from API when available
+            # Prepare data from Fake Store API
             data = {
-                "customer_id": customer_id,
-                "name": unique_name,
-                "email": user.get('email', f"{unique_name.lower()}@example.com"),
-                "country": "US",  # Default country
-                "age": random.randint(18, 65),  # Age not provided by API, so we generate it
-                "purchase_amount": round(random.uniform(10, 500), 2),  # Generate random purchase amount
-                "segment": f"Segment-{random.randint(0, 2)}",  # Random segment
+                "id": str(user.get("id", 0)),
+                "customer_id": str(user.get("id", 0)),  # Use ID as customer_id
+                "name": {"firstname": user["name"]["firstname"], "lastname": user["name"]["lastname"]},
+                "email": user.get("email", ""),
+                "age": 0,  # Fake Store API doesn't provide age, set to 0 or fetch from another source if available
+                "purchase_amount": round(abs(hash(user["email"])) % 1000 / 10, 2),  # Generate pseudo-random purchase amount
+                "segment": f"Segment-{abs(hash(user['email'])) % 3}",  # Assign random segment
                 "timestamp": time.time()
             }
             
             # Send to Kafka
             producer.send('customer-data', value=data)
-            logger.info(f"Sent: Customer ID: {data['customer_id']}, Name: {data['name']}, Amount: ${data['purchase_amount']}")
-            
-            customer_id_counter += 1
-            name_counter += 1
+            logger.info(f"Sent: Customer ID: {data['customer_id']}, Name: {data['name']['firstname']} {data['name']['lastname']}, Amount: ${data['purchase_amount']}")
         except Exception as e:
             logger.error(f"Error processing user data: {e}")
     
