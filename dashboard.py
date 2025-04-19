@@ -69,9 +69,11 @@ def load_data(hours=24, selected_clusters=None):
         if where_clauses:
             query += " WHERE " + " AND ".join(where_clauses)
 
+        st.sidebar.markdown(f"**Debug Query**: {query} | Params: {params}")
         cursor.execute(query, params)
         columns = [desc[0] for desc in cursor.description]
         data = cursor.fetchall()
+        st.sidebar.markdown(f"**Debug Rows Fetched**: {len(data)}")
         cursor.close()
         conn.close()
         return pd.DataFrame(data, columns=columns)
@@ -84,7 +86,7 @@ def load_data(hours=24, selected_clusters=None):
 # 🔍 Sidebar Filters
 # ---------------------------
 st.sidebar.header("🔍 Filters")
-time_range = st.sidebar.slider("Select Time Range (Hours)", 0, 24, 1)
+time_range = st.sidebar.slider("Select Time Range (Hours)", 0, 24, 24)  # Default to 24 hours
 clusters = st.sidebar.multiselect("Select Clusters", options=[0, 1, 2], default=[0, 1, 2])
 
 # --------------------------- 
@@ -93,7 +95,7 @@ clusters = st.sidebar.multiselect("Select Clusters", options=[0, 1, 2], default=
 df = load_data(hours=time_range, selected_clusters=clusters)
 
 if df.empty:
-    st.warning("⚠️ No data available. Check database connection or data filters.")
+    st.warning("⚠️ No data available. Check database connection or data filters. See debug info in sidebar.")
 else:
     st.markdown("<h1 style='text-align: center; color: #4CAF50;'>📊 Real-Time Customer Segmentation Dashboard</h1>", unsafe_allow_html=True)
 
