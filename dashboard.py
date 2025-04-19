@@ -5,29 +5,9 @@ from sqlalchemy import create_engine, text
 import urllib.parse
 import time
 from datetime import datetime, timezone, timedelta
-import traceback
 
 # Streamlit config
 st.set_page_config(page_title="📊 Real-Time Customer Segmentation", layout="wide")
-
-# Initialize session state
-if 'refresh_counter' not in st.session_state:
-    st.session_state['refresh_counter'] = 0
-if 'df' not in st.session_state:
-    st.session_state.df = pd.DataFrame()
-if 'last_timestamp' not in st.session_state:
-    st.session_state.last_timestamp = None
-if 'db_connected' not in st.session_state:
-    st.session_state.db_connected = False
-if 'error_message' not in st.session_state:
-    st.session_state.error_message = None
-if 'connection_tested' not in st.session_state:
-    st.session_state.connection_tested = False
-
-# Display running indicator
-st.sidebar.markdown(f"### 🟢 Dashboard Running")
-st.sidebar.markdown(f"🕒 Last refresh: {datetime.now().strftime('%H:%M:%S')}")
-st.sidebar.markdown(f"🔄 Refresh count: {st.session_state['refresh_counter']}")
 
 # Database connection settings
 DB_HOST = "ep-dry-violet-a4v38rh7-pooler.us-east-1.aws.neon.tech"
@@ -37,14 +17,28 @@ DB_USER = "neondb_owner"
 DB_PASSWORD = urllib.parse.quote_plus("npg_5UbnztxlVuD1")
 DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?sslmode=require"
 
-# Main title
-st.title("📊 Real-Time Customer Segmentation Dashboard")
+# Initialize session state for persistent storage
+if 'refresh_counter' not in st.session_state:
+    st.session_state.refresh_counter = 0
+if 'last_refresh_time' not in st.session_state:
+    st.session_state.last_refresh_time = datetime.now().strftime('%H:%M:%S')
+if 'last_data_timestamp' not in st.session_state:
+    st.session_state.last_data_timestamp = None
 
-# Test database connection
+# Function to establish database connection
+@st.cache_resource(ttl=300)
+def get_database_engine():
+    return create_engine(DATABASE_URL)
+
+# Create sidebar status indicators
+st.sidebar.markdown("# 🟢 Dashboard Running")
+st.sidebar.markdown(f"### 🕒 Last refresh: {st.session_state.last_refresh_time}")
+st.sidebar.markdown(f"### 🔄 Refresh count: {st.session_state.refresh_counter}")
+
+# Connect to database and show status
 try:
-    engine = create_engine(DATABASE_URL)
+    engine = get_database_engine()
     with engine.connect() as conn:
-        st.session_state.db_connected = True
         st.sidebar.success("✅ Database connected successfully")
         
         # Check if table exists
@@ -56,34 +50,28 @@ try:
             result = conn.execute(text("SELECT COUNT(*) FROM customer_segments"))
             count = result.fetchone()[0]
             st.sidebar.success(f"✅ Found customer_segments table with {count} records")
-            
-            if count == 0:
-                st.warning("⚠️ Table exists but contains no records. Make sure your producer and consumer are running.")
-        else:
-            st.error("❌ The 'customer_segments' table does not exist in the database.")
-            st.stop()
-            
 except Exception as e:
-    st.sidebar.error(f"❌ Database connection error")
-    st.error(f"❌ Database connection failed: {str(e)}")
-    st.error(f"Details: {traceback.format_exc()}")
-    st.session_state.error_message = f"Database connection failed: {str(e)}"
+    st.sidebar.error(f"❌ Database connection error: {str(e)}")
+    st.error(f"Database connection failed: {str(e)}")
     st.stop()
+
+# Main title
+st.title("📊 Real-Time Customer Segmentation Dashboard")
 
 # Sidebar filters
 st.sidebar.header("🔍 Filters")
 auto_refresh = st.sidebar.checkbox("Enable Auto-Refresh (5s)", value=True)
 
-# More lenient time range approach
+# Time range filter
 time_range = st.sidebar.slider("Time Range (hours)", 1, 168, 48)
-
-# Use a very old from_time to ensure we get data
 from_time = datetime.now(timezone.utc) - timedelta(hours=time_range)
 
 # Cluster filter
 clusters = st.sidebar.multiselect("Clusters", [0, 1, 2], default=[0, 1, 2])
+if not clusters:
+    clusters = [0, 1, 2]  # Default to all clusters if none selected
 
-# Purchase amount range - with better error handling
+# Purchase amount range
 try:
     with engine.connect() as conn:
         min_query = text("SELECT COALESCE(MIN(purchase_amount), 0) as min FROM customer_segments")
@@ -107,70 +95,46 @@ except Exception as e:
     st.sidebar.warning(f"Could not fetch purchase limits: {str(e)[:100]}")
     purchase_min, purchase_max = 0.0, 1000.0
 
-# Debug information
-st.sidebar.markdown("### 🔍 Debug Information")
-st.sidebar.write(f"From Time: {from_time}")
-st.sidebar.write(f"Selected Clusters: {clusters}")
-st.sidebar.write(f"Purchase Range: ${purchase_min:.2f} - ${purchase_max:.2f}")
-
-# Fetch data function with better error handling
-def fetch_data(_from_time, _clusters, _purchase_min, _purchase_max):
-    if not _clusters:  # If no clusters selected, return empty DataFrame
-        st.warning("Please select at least one cluster.")
-        return pd.DataFrame()
-    
+# Function to fetch data - critical part for real-time updates
+def fetch_data():
     try:
-        # Try direct SQL approach
+        # Explicitly disable caching for this function
         query = f"""
             SELECT record_id, customer_id, name, age, purchase_amount, cluster, created_at
             FROM customer_segments
-            WHERE created_at >= '{_from_time.isoformat()}'
-            AND cluster IN ({','.join(map(str, _clusters))})
-            AND purchase_amount BETWEEN {_purchase_min} AND {_purchase_max}
+            WHERE created_at >= '{from_time.isoformat()}'
+            AND cluster IN ({','.join(map(str, clusters))})
+            AND purchase_amount BETWEEN {purchase_min} AND {purchase_max}
             ORDER BY created_at DESC
             LIMIT 100
         """
-        
-        st.sidebar.code(query, language="sql")
         
         with engine.connect() as conn:
             df = pd.read_sql(query, conn)
             
         if not df.empty:
-            st.session_state.last_timestamp = df['created_at'].max()
-            st.sidebar.success(f"✅ Retrieved {len(df)} records")
-        else:
-            st.sidebar.warning("⚠️ Query returned no data")
-            
-        return df
+            st.session_state.last_data_timestamp = df['created_at'].max()
         
+        return df
     except Exception as e:
-        st.sidebar.error(f"❌ Error fetching data")
         st.error(f"Error fetching data: {str(e)}")
-        st.error(f"Details: {traceback.format_exc()}")
         return pd.DataFrame()
-
-# Auto-refresh counter
-if auto_refresh:
-    st.session_state['refresh_counter'] += 1
 
 # Manual refresh button
 if st.button("🔄 Manual Refresh"):
     with st.spinner("Fetching real-time data..."):
-        new_df = fetch_data(from_time, clusters, purchase_min, purchase_max)
-        if not new_df.empty:
-            st.session_state.df = new_df
-        else:
-            st.warning("No data available with current filters. Try adjusting your filters.")
-
-# Initial data load if needed
-if st.session_state.df.empty:
-    with st.spinner("Initial data loading..."):
-        new_df = fetch_data(from_time, clusters, purchase_min, purchase_max)
-        if not new_df.empty:
-            st.session_state.df = new_df
-
-df = st.session_state.df
+        df = fetch_data()
+        st.session_state.refresh_counter += 1
+        st.session_state.last_refresh_time = datetime.now().strftime('%H:%M:%S')
+else:
+    # Auto refresh or initial load
+    if auto_refresh:
+        df = fetch_data()
+        st.session_state.refresh_counter += 1
+        st.session_state.last_refresh_time = datetime.now().strftime('%H:%M:%S')
+    else:
+        # Initial load if needed
+        df = fetch_data()
 
 # Dashboard rendering
 if df.empty:
@@ -180,9 +144,9 @@ if df.empty:
     st.subheader("Database Diagnostic")
     try:
         with engine.connect() as conn:
-            test_query = text("SELECT NOW() as current_time, version() as pg_version")
+            test_query = text("SELECT NOW() as current_time")
             result = conn.execute(test_query).fetchone()
-            st.success(f"Database is accessible. Current time: {result[0]}, Version: {result[1][:20]}...")
+            st.success(f"Database is accessible. Current time: {result[0]}")
             
             # Try to get the latest records regardless of filters
             latest_query = text("SELECT * FROM customer_segments ORDER BY created_at DESC LIMIT 5")
@@ -192,11 +156,11 @@ if df.empty:
                 st.success(f"Found {len(latest_df)} recent records in the database. Here's a sample:")
                 st.dataframe(latest_df)
             else:
-                st.error("No records found in the customer_segments table. Make sure your producer and consumer are running.")
+                st.error("No records found in the customer_segments table.")
     except Exception as e:
         st.error(f"Diagnostic query failed: {str(e)}")
 else:
-    st.success(f"✅ Showing {len(df)} records. Last updated: {st.session_state.last_timestamp}")
+    st.success(f"✅ Showing {len(df)} records. Last updated: {st.session_state.last_data_timestamp}")
     
     # Create dashboard layout
     col1, col2 = st.columns(2)
@@ -243,9 +207,9 @@ else:
 # Force refresh button at bottom of page
 st.markdown("---")
 if st.button("🔄 Force Full Page Refresh"):
-    st.experimental_rerun()
+    st.rerun()
 
-# Auto-refresh mechanism
+# Auto-refresh mechanism - THIS IS THE KEY PART FOR REAL-TIME UPDATES
 if auto_refresh:
-    time.sleep(5)
-    st.experimental_rerun()
+    time.sleep(5)  # Wait for 5 seconds
+    st.rerun()  # Rerun the app to refresh the data
