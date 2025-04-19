@@ -13,7 +13,7 @@ logger.info("Consumer script starting...")
 
 # Kafka setup
 KAFKA_TOPIC = "customer-data"
-KAFKA_BOOTSTRAP_SERVERS = "localhost:9092"  # Update this if Kafka is deployed elsewhere
+KAFKA_BOOTSTRAP_SERVERS = "localhost:9092"  # Update if Kafka is deployed elsewhere
 
 # Connect to Kafka
 connected_kafka = False
@@ -22,7 +22,7 @@ while not connected_kafka:
         consumer = KafkaConsumer(
             KAFKA_TOPIC,
             bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
-            value_deserializer=lambda m: json.loads(m.decode("utf-8")),
+            value_deserializer=lambda m: json.loads(m.decode("utf-8")) if m else {},
             auto_offset_reset="earliest",
             enable_auto_commit=True,
             group_id="customer-group"
@@ -79,7 +79,7 @@ except Exception as e:
     logger.error(f"Failed to create customer_segments table: {e}")
     exit(1)
 
-# Simple segmentation logic based on purchase_amount (since API data may not include segments)
+# Simple segmentation logic based on purchase_amount
 def determine_cluster(purchase_amount):
     if purchase_amount is None or purchase_amount < 0:
         return 0
@@ -99,15 +99,19 @@ try:
         logger.info(f"Received message: {data}")
 
         try:
-            # Extract data from Fake Store API message
+            # Handle both old (string name) and new (nested name) message formats
             customer_id = data.get("id", data.get("customer_id", ""))
-            name = data.get("name", {}).get("firstname", "") + " " + data.get("name", {}).get("lastname", "")
-            age = data.get("age", 0)  # Assuming age might be added or default to 0
+            name_data = data.get("name", {})
+            if isinstance(name_data, str):
+                name = name_data  # Old format: name is a string
+            else:
+                name = f"{name_data.get('firstname', '')} {name_data.get('lastname', '')}".strip()  # New format: nested dict
+            age = data.get("age", 0)
             purchase_amount = data.get("purchase_amount", 0.0)
             segment = data.get("segment", "Segment-0")
             timestamp = data.get("timestamp", time.time())
 
-            # Determine cluster if segment is not provided or invalid
+            # Determine cluster
             cluster = int(segment.split('-')[1]) if segment and segment.startswith("Segment-") else determine_cluster(purchase_amount)
 
             cursor.execute(
