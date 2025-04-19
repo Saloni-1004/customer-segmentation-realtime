@@ -9,7 +9,7 @@ from datetime import datetime, timezone, timedelta
 # Streamlit config
 st.set_page_config(page_title="📊 Real-Time Customer Segmentation", layout="wide")
 
-# Database connection settings
+# Database connection settings for Neon Database
 DB_HOST = "ep-dry-violet-a4v38rh7-pooler.us-east-1.aws.neon.tech"
 DB_PORT = 5432
 DB_NAME = "neondb"
@@ -26,7 +26,7 @@ if 'last_data_timestamp' not in st.session_state:
     st.session_state.last_data_timestamp = None
 
 # Function to establish database connection
-@st.cache_resource(ttl=300)
+@st.cache_resource
 def get_database_engine():
     return create_engine(DATABASE_URL)
 
@@ -83,7 +83,6 @@ try:
         min_val = float(min_result[0])
         max_val = float(max_result[0])
         
-        # Ensure we have a valid range
         if min_val >= max_val:
             min_val = 0
             max_val = 1000
@@ -98,7 +97,6 @@ except Exception as e:
 # Function to fetch data - critical part for real-time updates
 def fetch_data():
     try:
-        # Explicitly disable caching for this function
         query = f"""
             SELECT record_id, customer_id, name, age, purchase_amount, cluster, created_at
             FROM customer_segments
@@ -108,14 +106,11 @@ def fetch_data():
             ORDER BY created_at DESC
             LIMIT 100
         """
-        
         with engine.connect() as conn:
             df = pd.read_sql(query, conn)
-            
-        if not df.empty:
-            st.session_state.last_data_timestamp = df['created_at'].max()
-        
-        return df
+            if not df.empty:
+                st.session_state.last_data_timestamp = df['created_at'].max()
+            return df
     except Exception as e:
         st.error(f"Error fetching data: {str(e)}")
         return pd.DataFrame()
@@ -127,20 +122,16 @@ if st.button("🔄 Manual Refresh"):
         st.session_state.refresh_counter += 1
         st.session_state.last_refresh_time = datetime.now().strftime('%H:%M:%S')
 else:
-    # Auto refresh or initial load
-    if auto_refresh:
-        df = fetch_data()
-        st.session_state.refresh_counter += 1
-        st.session_state.last_refresh_time = datetime.now().strftime('%H:%M:%S')
-    else:
-        # Initial load if needed
-        df = fetch_data()
+    df = fetch_data()
+    st.session_state.refresh_counter += 1
+    st.session_state.last_refresh_time = datetime.now().strftime('%H:%M:%S')
+    if df.empty:
+        st.warning("⚠️ No new data fetched. Check database or filters.")
 
 # Dashboard rendering
 if df.empty:
     st.warning("⚠️ No data available. Check database connection or data filters.")
     
-    # Show a test query output
     st.subheader("Database Diagnostic")
     try:
         with engine.connect() as conn:
@@ -148,7 +139,6 @@ if df.empty:
             result = conn.execute(test_query).fetchone()
             st.success(f"Database is accessible. Current time: {result[0]}")
             
-            # Try to get the latest records regardless of filters
             latest_query = text("SELECT * FROM customer_segments ORDER BY created_at DESC LIMIT 5")
             latest_df = pd.read_sql(latest_query, conn)
             
@@ -162,7 +152,6 @@ if df.empty:
 else:
     st.success(f"✅ Showing {len(df)} records. Last updated: {st.session_state.last_data_timestamp}")
     
-    # Create dashboard layout
     col1, col2 = st.columns(2)
 
     with col1:
@@ -197,19 +186,15 @@ else:
                      labels={"cluster": "Customer Cluster", "purchase_amount": "Avg Purchase Amount ($)"})
         st.plotly_chart(fig4, use_container_width=True)
 
-    # Data table
     st.subheader("Customer Data")
     st.dataframe(df)
 
-    # Download button
     st.download_button("⬇ Download CSV", df.to_csv(index=False), "customer_segments.csv", "text/csv")
 
-# Force refresh button at bottom of page
 st.markdown("---")
 if st.button("🔄 Force Full Page Refresh"):
-    st.rerun()
+    st.experimental_rerun()
 
-# Auto-refresh mechanism - THIS IS THE KEY PART FOR REAL-TIME UPDATES
 if auto_refresh:
-    time.sleep(5)  # Wait for 5 seconds
-    st.rerun()  # Rerun the app to refresh the data
+    time.sleep(5)
+    st.experimental_rerun()
