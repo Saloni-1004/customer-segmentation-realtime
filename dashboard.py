@@ -1,128 +1,181 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from sqlalchemy import create_engine
-import urllib.parse
 import time
-from datetime import timezone
+import hashlib
+import psycopg2
+import os
+from datetime import datetime, timedelta
 
-# Streamlit config
+# Page configuration
 st.set_page_config(page_title="📊 Real-Time Customer Segmentation", layout="wide")
 
-# Initialize session state
-if 'autorefresh' not in st.session_state:
-    st.session_state['autorefresh'] = time.time()
-if 'df' not in st.session_state:
-    st.session_state.df = pd.DataFrame()
-if 'last_timestamp' not in st.session_state:
-    st.session_state.last_timestamp = None
+# --------------------------- 
+# 🔐 Simple Login Function
+# ---------------------------
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
 
-# Neon PostgreSQL connection
-DB_HOST = "ep-dry-violet-a4v38rh7-pooler.us-east-1.aws.neon.tech"
-DB_PORT = 5432
-DB_NAME = "neondb"
-DB_USER = "neondb_owner"
-DB_PASSWORD = urllib.parse.quote_plus("npg_5UbnztxlVuD1")
-DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?sslmode=require"
+def check_password():
+    """Check if the user has entered the correct password."""
+    if "password_correct" not in st.session_state:
+        st.session_state["password_correct"] = False
 
-try:
-    engine = create_engine(DATABASE_URL)
-except Exception as e:
-    st.error(f"❌ Database connection failed: {e}")
+    def password_entered():
+        """Handle password input and validate it."""
+        if "password" in st.session_state:
+            if hash_password(st.session_state["password"]) == hash_password("admin123"):
+                st.session_state["password_correct"] = True
+                if "password" in st.session_state:
+                    del st.session_state["password"]
+            else:
+                st.session_state["password_correct"] = False
+
+    if not st.session_state["password_correct"]:
+        st.text_input("🔐 Enter Password", type="password", on_change=password_entered, key="password")
+        return False
+    return True
+
+if not check_password():
     st.stop()
 
-st.title("📊 Real-Time Customer Segmentation Dashboard")
+# --------------------------- 
+# Database Connection Function
+# ---------------------------
+def get_connection():
+    return psycopg2.connect(**st.secrets["postgres"])
 
-# Sidebar filters
+# --------------------------- 
+# 📊 Load data from Neon PostgreSQL
+# ---------------------------
+@st.cache_data(ttl=5)
+def load_data(hours=24, selected_clusters=None):
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        where_clauses = []
+        params = []
+
+        if hours > 0:
+            where_clauses.append("created_at > %s")
+            params.append(datetime.now() - timedelta(hours=hours))
+
+        if selected_clusters and len(selected_clusters) > 0:
+            placeholders = ', '.join(['%s'] * len(selected_clusters))
+            where_clauses.append(f"cluster IN ({placeholders})")
+            params.extend(selected_clusters)
+
+        query = "SELECT * FROM customer_segments"
+        if where_clauses:
+            query += " WHERE " + " AND ".join(where_clauses)
+
+        cursor.execute(query, params)
+        columns = [desc[0] for desc in cursor.description]
+        data = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        return pd.DataFrame(data, columns=columns)
+
+    except Exception as e:
+        st.error(f"Database error: {e}")
+        return pd.DataFrame()
+
+# --------------------------- 
+# 🔍 Sidebar Filters
+# ---------------------------
 st.sidebar.header("🔍 Filters")
-auto_refresh = st.sidebar.checkbox("Enable Auto-Refresh (5s)", value=True)
+time_range = st.sidebar.slider("Select Time Range (Hours)", 0, 24, 1)
+clusters = st.sidebar.multiselect("Select Clusters", options=[0, 1, 2], default=[0, 1, 2])
 
-# Time range (dynamic to include latest data)
-time_range = st.sidebar.slider("Time Range (hours)", 1, 168, 48)
-if st.session_state.last_timestamp:
-    from_time = st.session_state.last_timestamp - pd.Timedelta(hours=time_range)
-else:
-    from_time = pd.Timestamp.now(tz=timezone.utc) - pd.Timedelta(hours=time_range)
+# --------------------------- 
+# 📋 Load and render data
+# ---------------------------
+df = load_data(hours=time_range, selected_clusters=clusters)
 
-# Cluster filter
-clusters = st.sidebar.multiselect("Clusters", [0, 1, 2], default=[0, 1, 2])
-
-# Purchase amount range
-def get_purchase_limits():
-    query = "SELECT MIN(purchase_amount) as min, MAX(purchase_amount) as max FROM customer_segments"
-    return pd.read_sql(query, engine).iloc[0]
-
-try:
-    limits = get_purchase_limits()
-    purchase_min, purchase_max = st.sidebar.slider("Purchase Amount", 
-        float(limits['min'] or 0.0), float(limits['max'] or 1000.0),
-        (float(limits['min'] or 0.0), float(limits['max'] or 1000.0))
-    )
-except:
-    purchase_min, purchase_max = 0.0, 1000.0
-
-# Fetch data function with debug
-def fetch_data(_from_time, _clusters, _purchase_min, _purchase_max):
-    query = """
-        SELECT record_id, customer_id, name, age, purchase_amount, cluster, created_at
-        FROM customer_segments
-        WHERE created_at >= %s
-        AND cluster IN %s
-        AND purchase_amount BETWEEN %s AND %s
-        ORDER BY created_at DESC
-        LIMIT 100
-    """
-    st.sidebar.markdown(f"**Debug Query Time**: {time.time()}")
-    df = pd.read_sql(query, engine, params=(_from_time, tuple(_clusters), _purchase_min, _purchase_max))
-    st.sidebar.markdown(f"**Debug Fetch Time**: {time.time()} - Rows: {len(df)}")
-    if not df.empty and (st.session_state.last_timestamp is None or df['created_at'].max() > st.session_state.last_timestamp):
-        st.session_state.last_timestamp = df['created_at'].max()
-    return df
-
-# Main display logic
-with st.spinner("Fetching real-time data..."):
-    if auto_refresh and time.time() - st.session_state['autorefresh'] >= 5:
-        st.session_state['autorefresh'] = time.time()
-        new_df = fetch_data(from_time, clusters, purchase_min, purchase_max)
-        if not new_df.empty:
-            st.session_state.df = new_df
-
-    if st.button("🔄 Manual Refresh"):
-        new_df = fetch_data(from_time, clusters, purchase_min, purchase_max)
-        if not new_df.empty:
-            st.session_state.df = new_df
-
-df = st.session_state.df
-
-# Dashboard Rendering
 if df.empty:
-    st.warning("⚠️ No data found. Waiting for new real-time records...")
+    st.warning("⚠️ No data available. Check database connection or data filters.")
 else:
-    st.success(f"✅ Showing {len(df)} records. Last updated: {st.session_state.last_timestamp}")
-    
-    col1, col2 = st.columns(2)
+    st.markdown("<h1 style='text-align: center; color: #4CAF50;'>📊 Real-Time Customer Segmentation Dashboard</h1>", unsafe_allow_html=True)
 
-    with col1:
-        fig1 = px.bar(df, x="cluster", y="purchase_amount", color="cluster", barmode="group")
+    # Metrics
+    total_customers = len(df)
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total Customers", total_customers)
+    col2.metric("Average Purchase", f"${df['purchase_amount'].mean():.2f}")
+    col3.metric("Average Age", f"{df['age'].mean():.1f}")
+
+    # Charts layout
+    chart_col1, chart_col2 = st.columns(2)
+
+    with chart_col1:
+        # Cluster-wise Purchase Distribution
+        st.subheader("💲 Cluster-wise Purchase Distribution")
+        purchase_dist = df.groupby('cluster')['purchase_amount'].sum().reset_index()
+        fig1 = px.bar(purchase_dist, x="cluster", y="purchase_amount", color="cluster",
+                      color_continuous_scale="teal", title="Cluster-wise Purchase Distribution")
+        fig1.update_layout(paper_bgcolor="#1E1E1E", plot_bgcolor="#1E1E1E", font_color="#F5F5F5",
+                          xaxis=dict(gridcolor="#555555"), yaxis=dict(gridcolor="#555555"))
         st.plotly_chart(fig1, use_container_width=True)
 
-    with col2:
-        fig2 = px.histogram(df, x="age", color="cluster", barmode="overlay")
-        st.plotly_chart(fig2, use_container_width=True)
-
-    col3, col4 = st.columns(2)
-
-    with col3:
-        cluster_counts = df["cluster"].value_counts().reset_index()
-        cluster_counts.columns = ["Cluster", "Total"]
-        fig3 = px.pie(cluster_counts, values="Total", names="Cluster")
+        # Total Customers Per Cluster
+        st.subheader("👥 Total Customers Per Cluster")
+        cluster_counts = df.groupby('cluster').size().reset_index(name='count')
+        fig3 = px.pie(cluster_counts, values="count", names="cluster", color="cluster",
+                      color_discrete_sequence=px.colors.sequential.Viridis,
+                      title="Total Customers Per Cluster")
+        fig3.update_layout(paper_bgcolor="#1E1E1E", plot_bgcolor="#1E1E1E", font_color="#F5F5F5")
         st.plotly_chart(fig3, use_container_width=True)
 
-    with col4:
-        avg_purchase = df.groupby("cluster")["purchase_amount"].mean().reset_index()
-        fig4 = px.bar(avg_purchase, x="cluster", y="purchase_amount", color="cluster")
+    with chart_col2:
+        # Age Distribution by Cluster
+        st.subheader("📈 Age Distribution by Cluster")
+        fig2 = px.histogram(df, x="age", color="cluster", nbins=10, barmode="overlay",
+                            color_discrete_sequence=px.colors.sequential.YlOrRd,
+                            title="Age Distribution by Cluster")
+        fig2.update_layout(paper_bgcolor="#1E1E1E", plot_bgcolor="#1E1E1E", font_color="#F5F5F5",
+                          xaxis=dict(gridcolor="#555555"), yaxis=dict(gridcolor="#555555"))
+        st.plotly_chart(fig2, use_container_width=True)
+
+        # Average Purchase Per Cluster
+        st.subheader("💸 Average Purchase Per Cluster")
+        avg_purchase = df.groupby('cluster')['purchase_amount'].mean().reset_index()
+        fig4 = px.bar(avg_purchase, x="cluster", y="purchase_amount", color="cluster",
+                      color_continuous_scale="teal", title="Average Purchase Per Cluster")
+        fig4.update_layout(paper_bgcolor="#1E1E1E", plot_bgcolor="#1E1E1E", font_color="#F5F5F5",
+                          xaxis=dict(gridcolor="#555555"), yaxis=dict(gridcolor="#555555"))
         st.plotly_chart(fig4, use_container_width=True)
 
-    st.dataframe(df)
+    # Latest Customer Data
+    st.subheader("📋 Latest Customer Data")
+    display_df = df[["customer_id", "name", "age", "purchase_amount", "cluster", "created_at"]]
+    if 'created_at' in display_df.columns and not display_df.empty:
+        display_df['created_at'] = pd.to_datetime(display_df['created_at']).dt.strftime('%Y-%m-%d %H:%M:%S')
+    st.dataframe(display_df.sort_values(by='created_at', ascending=False), height=400, use_container_width=True)
 
+    # Alert for high purchases
+    if df['purchase_amount'].max() > 2400:
+        st.error("⚠️ Alert: Purchase amount exceeds 2400!")
+
+    # Download button
     st.download_button("⬇ Download CSV", df.to_csv(index=False), "customer_segments.csv", "text/csv")
+
+# --------------------------- 
+# 🔁 Auto-refresh
+# ---------------------------
+if st.sidebar.checkbox("Enable Auto-Refresh (5s)", value=True):
+    time.sleep(5)
+    st.rerun()
+
+# Add basic CSS for styling
+st.markdown(
+    """
+    <style>
+    body { background-color: #121212; color: #F5F5F5; }
+    .stApp { background-color: #1E1E1E; }
+    h1 { text-align: center; color: #4CAF50; padding: 10px; border-radius: 10px; }
+    .stMetric { color: #FFFF99; }
+    .stDataFrame { background-color: #2A2A2A; color: #F5F5F5; }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
