@@ -193,8 +193,16 @@ else:
 
 st.markdown("---")
 if st.button("🔄 Force Full Page Refresh"):
-    st.experimental_rerun()
+    st.rerun()
 
+# Improved auto-refresh mechanism
 if auto_refresh:
-    time.sleep(5)
-    st.experimental_rerun()
+    def refresh_callback():
+        st.session_state.refresh_counter += 1
+        st.session_state.last_refresh_time = datetime.now().strftime('%H:%M:%S')
+        st.rerun()
+    if 'refresh_timer' not in st.session_state:
+        st.session_state.refresh_timer = time.time()
+    if time.time() - st.session_state.refresh_timer >= 5:
+        refresh_callback()
+        st.session_state.refresh_timer = time.time()
