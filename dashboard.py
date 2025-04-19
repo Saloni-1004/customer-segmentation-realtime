@@ -1,253 +1,271 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import numpy as np
-from datetime import datetime
-import random
+from sqlalchemy import create_engine
+import time
+import urllib.parse
 
-# Set page configuration
-st.set_page_config(layout="wide", page_title="Customer Segmentation Dashboard", page_icon="🧠")
+# PostgreSQL Connection for Neon.tech
+DB_HOST = "ep-dry-violet-a4v38rh7-pooler.us-east-1.aws.neon.tech"
+DB_PORT = 5432
+DB_NAME = "neondb"
+DB_USER = "neondb_owner"
+DB_PASSWORD = urllib.parse.quote_plus("npg_5UbnztxlVuD1")  # URL-encode the password
+DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?sslmode=require"
 
-# Apply dark theme styling
-st.markdown("""
-<style>
-    .main {
-        background-color: #121212;
-        color: white;
+try:
+    engine = create_engine(DATABASE_URL)
+except Exception as e:
+    st.error(f"⚠️ Database connection failed: {e}")
+    st.stop()
+
+# Streamlit Page Config
+st.set_page_config(page_title="📊 Real-Time Customer Segmentation", layout="wide")
+
+# Custom CSS for Styling
+st.markdown(
+    """
+    <style>
+    body { background-color: #121212; color: white; }
+    .stApp { background-color: #1E1E1E; }
+    h1 { 
+        text-align: center; 
+        font-size: 40px; 
+        font-weight: bold; 
+        color: #4CAF50; 
+        padding: 10px; 
+        background: linear-gradient(to right, #0f2027, #203a43, #2c5364); 
+        border-radius: 15px; 
+        box-shadow: 0px 4px 15px rgba(0, 255, 0, 0.3); 
+        animation: fadeIn 1s ease-in-out; 
     }
-    .stMetric {
-        background-color: #1e1e1e;
-        padding: 15px;
-        border-radius: 5px;
+    @keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
     }
-    .st-emotion-cache-1wivap2 {
-        border-radius: 5px;
+    .chart-container { 
+        border-radius: 15px; 
+        padding: 20px; 
+        background-color: #2A2A2A; 
+        box-shadow: 0px 5px 20px rgba(255, 255, 255, 0.15); 
+        transition: transform 0.3s ease, box-shadow 0.3s ease; 
     }
-    h1, h2, h3, h4 {
-        color: white !important;
+    .chart-container:hover { 
+        transform: scale(1.02); 
+        box-shadow: 0px 8px 25px rgba(255, 255, 255, 0.25); 
     }
-    .stDataFrame {
-        background-color: #1e1e1e;
+    .chart-title { 
+        font-size: 20px; 
+        font-weight: bold; 
+        margin-bottom: 15px; 
+        color: #FFD700; 
+        text-shadow: 0px 1px 5px rgba(255, 215, 0, 0.5); 
     }
-    .css-18e3th9 {
-        padding-top: 1rem;
+    .stButton>button { 
+        background-color: #4CAF50; 
+        color: white; 
+        border-radius: 10px; 
+        padding: 10px 20px; 
+        font-weight: bold; 
+        transition: background-color 0.3s ease; 
     }
-    .css-1d391kg {
-        padding-top: 3.5rem;
+    .stButton>button:hover { 
+        background-color: #45a049; 
+        cursor: pointer; 
     }
-</style>
-""", unsafe_allow_html=True)
-
-# Title with icon
-st.markdown("<h1 style='text-align: left; color: white;'>🟢 Real-Time Customer Segmentation Dashboard</h1>", unsafe_allow_html=True)
-
-# Generate sample data if needed
-def generate_sample_data(n=200):
-    names = [f"customer_{i}" for i in range(1, n+1)]
-    ages = np.random.randint(18, 65, n)
-    
-    # Create purchase amounts that correlate somewhat with age
-    base_purchases = np.random.lognormal(5, 1, n)
-    age_factor = (ages - 18) / 47  # Normalize age to 0-1
-    purchase_amounts = base_purchases * (0.7 + 0.6 * age_factor)
-    purchase_amounts = np.round(purchase_amounts, 2)
-    
-    # Simple clustering based on age and purchase amount
-    def assign_cluster(age, amount):
-        if age < 30 and amount < 200:
-            return 0
-        elif age >= 40 or amount > 300:
-            return 1
-        else:
-            return 2
-    
-    clusters = [assign_cluster(age, amount) for age, amount in zip(ages, purchase_amounts)]
-    
-    # Generate timestamps for the past week
-    current_time = datetime.now()
-    timestamps = [current_time.replace(
-        day=current_time.day - random.randint(0, 7),
-        hour=random.randint(0, 23),
-        minute=random.randint(0, 59),
-        second=random.randint(0, 59)
-    ).strftime("%Y-%m-%d %H:%M:%S") for _ in range(n)]
-    
-    return pd.DataFrame({
-        "name": names,
-        "age": ages,
-        "purchase_amount": purchase_amounts,
-        "cluster": clusters,
-        "timestamp": timestamps
-    })
-
-# Generate or use real data
-if "df" not in st.session_state:
-    st.session_state.df = generate_sample_data()
-
-df = st.session_state.df
-
-# KPIs
-total_customers = len(df)
-average_purchase = df["purchase_amount"].mean()
-average_age = df["age"].mean()
-churn_rate = round((df["purchase_amount"] < 100).sum() / total_customers * 100, 2)
-
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("👥 Total Customers", f"{total_customers}")
-col2.metric("💸 Avg. Purchase", f"₹{average_purchase:.2f}")
-col3.metric("🎂 Avg. Age", f"{average_age:.1f} yrs")
-col4.metric("⚠️ Potential Churn Rate", f"{churn_rate}%")
-
-st.markdown("---")
-
-# Charts layout
-col_left, col_right = st.columns(2)
-
-with col_left:
-    st.markdown("### 💲 Cluster-wise Purchase Distribution")
-    fig = px.bar(
-        df.groupby("cluster")["purchase_amount"].mean().reset_index(),
-        x="cluster", 
-        y="purchase_amount",
-        labels={"purchase_amount": "Average Purchase", "cluster": "Cluster"},
-        color_discrete_sequence=['#2ecc71', '#2ecc71', '#2ecc71']
-    )
-    fig.update_layout(
-        plot_bgcolor="#121212",
-        paper_bgcolor="#121212",
-        font_color="white",
-        margin=dict(l=10, r=10, t=10, b=10),
-        xaxis=dict(
-            title_font=dict(color="white"),
-            tickfont=dict(color="white"),
-            gridcolor="#333333"
-        ),
-        yaxis=dict(
-            title_font=dict(color="white"),
-            tickfont=dict(color="white"),
-            gridcolor="#333333"
-        )
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-with col_right:
-    st.markdown("### 📊 Age Distribution by Cluster")
-    fig = px.histogram(
-        df, 
-        x="age", 
-        color="cluster",
-        barmode="overlay",
-        color_discrete_sequence=px.colors.sequential.YlGn
-    )
-    fig.update_layout(
-        plot_bgcolor="#121212",
-        paper_bgcolor="#121212",
-        font_color="white",
-        margin=dict(l=10, r=10, t=10, b=10),
-        xaxis=dict(
-            title_font=dict(color="white"),
-            tickfont=dict(color="white"),
-            gridcolor="#333333"
-        ),
-        yaxis=dict(
-            title_font=dict(color="white"),
-            tickfont=dict(color="white"),
-            gridcolor="#333333"
-        ),
-        legend=dict(
-            title_font=dict(color="white"),
-            font=dict(color="white")
-        )
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-col_left2, col_right2 = st.columns(2)
-
-with col_left2:
-    st.markdown("### 👨‍👩‍👧‍👦 Total Customers Per Cluster")
-    pie_df = df["cluster"].value_counts().reset_index()
-    pie_df.columns = ["cluster", "count"]
-    fig = px.pie(
-        pie_df, 
-        names="cluster", 
-        values="count",
-        color="cluster",
-        color_discrete_sequence=px.colors.sequential.Greens
-    )
-    fig.update_layout(
-        plot_bgcolor="#121212",
-        paper_bgcolor="#121212",
-        font_color="white",
-        margin=dict(l=10, r=10, t=10, b=10),
-        legend=dict(
-            title_font=dict(color="white"),
-            font=dict(color="white")
-        )
-    )
-    fig.update_traces(
-        textinfo='percent+label',
-        textfont_color="white"
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-with col_right2:
-    st.markdown("### 💲 Average Purchase Per Cluster")
-    cluster_purchase = df.groupby("cluster")["purchase_amount"].mean().reset_index()
-    fig = px.bar(
-        cluster_purchase, 
-        x="cluster", 
-        y="purchase_amount",
-        labels={"purchase_amount": "Average Purchase", "cluster": "Cluster"},
-        color_discrete_sequence=['#2a9d8f', '#2a9d8f', '#2a9d8f']
-    )
-    fig.update_layout(
-        plot_bgcolor="#121212",
-        paper_bgcolor="#121212",
-        font_color="white",
-        margin=dict(l=10, r=10, t=10, b=10),
-        xaxis=dict(
-            title_font=dict(color="white"),
-            tickfont=dict(color="white"),
-            gridcolor="#333333"
-        ),
-        yaxis=dict(
-            title_font=dict(color="white"),
-            tickfont=dict(color="white"),
-            gridcolor="#333333"
-        )
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-st.markdown("---")
-
-# Display recent data
-st.subheader("📄 Latest Customer Data")
-st.dataframe(
-    df.sort_values("timestamp", ascending=False).head(10)[["name", "age", "purchase_amount", "cluster", "timestamp"]],
-    use_container_width=True,
-    height=300
+    .stWarning { 
+        background-color: #333333; 
+        border: 2px solid #FF4444; 
+        border-radius: 10px; 
+        padding: 10px; 
+        color: #FF4444; 
+        animation: shake 0.5s; 
+    }
+    @keyframes shake {
+        0% { transform: translateX(0); }
+        25% { transform: translateX(-5px); }
+        50% { transform: translateX(5px); }
+        75% { transform: translateX(-5px); }
+        100% { transform: translateX(0); }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
 )
 
-# Add a placeholder for alerts
-st.markdown("<div style='background-color:#e74c3c; padding: 10px; border-radius: 5px;'>⚠️ Alert: Purchase amount exceeds 2400</div>", unsafe_allow_html=True)
+st.markdown("<h1>📊 Real-Time Customer Segmentation Dashboard</h1>", unsafe_allow_html=True)
 
-# Add a sidebar with filters if needed
-with st.sidebar:
-    st.header("Dashboard Controls")
-    
-    # Add date range filter
-    st.subheader("Date Range")
-    min_date = pd.to_datetime(df["timestamp"]).min().date()
-    max_date = pd.to_datetime(df["timestamp"]).max().date()
-    start_date = st.date_input("Start Date", min_date)
-    end_date = st.date_input("End Date", max_date)
-    
-    # Add cluster filter
-    st.subheader("Filter by Cluster")
-    clusters = sorted(df["cluster"].unique())
-    selected_clusters = st.multiselect("Select Clusters", clusters, default=clusters)
-    
-    # Add button to generate new data
-    if st.button("Refresh Data"):
-        st.session_state.df = generate_sample_data()
+# Sidebar for filters
+st.sidebar.header("🔍 Filters")
+
+# Time range filter
+time_range = st.sidebar.slider("Select Time Range (Hours)", 0, 24, 1)
+from_time = pd.Timestamp.now() - pd.Timedelta(hours=time_range)
+
+# Cluster filter
+clusters = st.sidebar.multiselect("Select Clusters", options=sorted([0, 1, 2]), default=[0, 1, 2])
+
+# Purchase amount range
+query = "SELECT MIN(purchase_amount) as min, MAX(purchase_amount) as max FROM customer_segments"
+limits = pd.read_sql(query, engine).iloc[0]
+purchase_min, purchase_max = st.sidebar.slider("Purchase Amount Range", 
+                                             min_value=float(limits['min']) if not limits['min'] is None else 0.0, 
+                                             max_value=float(limits['max']) if not limits['max'] is None else 1000.0, 
+                                             value=(float(limits['min']) if not limits['min'] is None else 0.0, 
+                                                    float(limits['max']) if not limits['max'] is None else 1000.0))
+
+auto_refresh = st.sidebar.checkbox("Enable Auto-Refresh (5s)", value=True)
+
+if auto_refresh:
+    while True:
+        query = f"""
+            SELECT record_id, customer_id, name, age, purchase_amount, cluster, created_at 
+            FROM customer_segments 
+            WHERE created_at >= %s 
+            AND cluster IN {tuple(clusters) if clusters else (0, 1, 2)}
+            AND purchase_amount BETWEEN %s AND %s
+            ORDER BY created_at DESC LIMIT 100
+        """
+        df = pd.read_sql(query, engine, params=(from_time, purchase_min, purchase_max))
+
+        if df.empty:
+            st.warning("⚠️ No data available yet. Waiting for new messages...")
+        else:
+            # 🔹 Dashboard Layout
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.markdown("<div class='chart-container'>", unsafe_allow_html=True)
+                st.markdown("<p class='chart-title'>💰 Cluster-wise Purchase Distribution</p>", unsafe_allow_html=True)
+                fig1 = px.bar(df, x="cluster", y="purchase_amount", color="cluster",
+                            labels={"cluster": "Cluster", "purchase_amount": "Purchase Amount"},
+                            color_continuous_scale="teal")
+                fig1.update_layout(title_text="💰 Cluster-wise Purchase Distribution", title_x=0.5)
+                st.plotly_chart(fig1, use_container_width=True)
+                st.markdown("</div>", unsafe_allow_html=True)
+
+            with col2:
+                st.markdown("<div class='chart-container'>", unsafe_allow_html=True)
+                st.markdown("<p class='chart-title'>👤 Age Distribution by Cluster</p>", unsafe_allow_html=True)
+                fig2 = px.histogram(df, x="age", color="cluster",
+                                    labels={"age": "Age", "count": "Number of Customers"},
+                                    barmode="overlay", color_discrete_sequence=px.colors.sequential.Viridis)
+                fig2.update_layout(title_text="👤 Age Distribution by Cluster", title_x=0.5)
+                st.plotly_chart(fig2, use_container_width=True)
+                st.markdown("</div>", unsafe_allow_html=True)
+
+            col3, col4 = st.columns(2)
+
+            with col3:
+                st.markdown("<div class='chart-container'>", unsafe_allow_html=True)
+                st.markdown("<p class='chart-title'>👥 Total Customers Per Cluster</p>", unsafe_allow_html=True)
+                cluster_counts = df["cluster"].value_counts().reset_index()
+                cluster_counts.columns = ["Cluster", "Total Customers"]
+                fig3 = px.pie(cluster_counts, values="Total Customers", names="Cluster",
+                            color_discrete_sequence=px.colors.sequential.Rainbow)
+                fig3.update_layout(title_text="👥 Total Customers Per Cluster", title_x=0.5)
+                st.plotly_chart(fig3, use_container_width=True)
+                st.markdown("</div>", unsafe_allow_html=True)
+
+            with col4:
+                st.markdown("<div class='chart-container'>", unsafe_allow_html=True)
+                st.markdown("<p class='chart-title'>💸 Average Purchase Per Cluster</p>", unsafe_allow_html=True)
+                avg_purchase = df.groupby("cluster")["purchase_amount"].mean().reset_index()
+                fig4 = px.bar(avg_purchase, x="cluster", y="purchase_amount", color="cluster",
+                            labels={"cluster": "Cluster", "purchase_amount": "Avg Purchase"},
+                            color_continuous_scale="magma")
+                fig4.update_layout(title_text="💸 Average Purchase Per Cluster", title_x=0.5)
+                st.plotly_chart(fig4, use_container_width=True)
+                st.markdown("</div>", unsafe_allow_html=True)
+
+            # Add customer data table
+            st.markdown("<div class='chart-container'>", unsafe_allow_html=True)
+            st.markdown("<p class='chart-title'>📋 Latest Customer Data</p>", unsafe_allow_html=True)
+            st.dataframe(df[["customer_id", "name", "age", "purchase_amount", "cluster", "created_at"]].style.format({"purchase_amount": "${:.2f}"}), use_container_width=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+
+            # Add alert for high purchases
+            if df["purchase_amount"].max() > 400:
+                st.error("⚠️ Alert: High purchase amount detected! Check cluster data.")
+
+            # Export data
+            if st.download_button("📥 Download Data as CSV", df.to_csv(index=False), "customer_segments.csv", "text/csv"):
+                st.success("Data downloaded successfully!")
+
+        time.sleep(5)
         st.rerun()
+else:
+    if st.button("🔄 Refresh Data"):
+        query = f"""
+            SELECT record_id, customer_id, name, age, purchase_amount, cluster, created_at 
+            FROM customer_segments 
+            WHERE created_at >= %s 
+            AND cluster IN {tuple(clusters) if clusters else (0, 1, 2)}
+            AND purchase_amount BETWEEN %s AND %s
+            ORDER BY created_at DESC LIMIT 100
+        """
+        df = pd.read_sql(query, engine, params=(from_time, purchase_min, purchase_max))
+
+        if df.empty:
+            st.warning("⚠️ No data available yet. Waiting for new messages...")
+        else:
+            # 🔹 Dashboard Layout
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.markdown("<div class='chart-container'>", unsafe_allow_html=True)
+                st.markdown("<p class='chart-title'>💰 Cluster-wise Purchase Distribution</p>", unsafe_allow_html=True)
+                fig1 = px.bar(df, x="cluster", y="purchase_amount", color="cluster",
+                            labels={"cluster": "Cluster", "purchase_amount": "Purchase Amount"},
+                            color_continuous_scale="teal")
+                fig1.update_layout(title_text="💰 Cluster-wise Purchase Distribution", title_x=0.5)
+                st.plotly_chart(fig1, use_container_width=True)
+                st.markdown("</div>", unsafe_allow_html=True)
+
+            with col2:
+                st.markdown("<div class='chart-container'>", unsafe_allow_html=True)
+                st.markdown("<p class='chart-title'>👤 Age Distribution by Cluster</p>", unsafe_allow_html=True)
+                fig2 = px.histogram(df, x="age", color="cluster",
+                                    labels={"age": "Age", "count": "Number of Customers"},
+                                    barmode="overlay", color_discrete_sequence=px.colors.sequential.Viridis)
+                fig2.update_layout(title_text="👤 Age Distribution by Cluster", title_x=0.5)
+                st.plotly_chart(fig2, use_container_width=True)
+                st.markdown("</div>", unsafe_allow_html=True)
+
+            col3, col4 = st.columns(2)
+
+            with col3:
+                st.markdown("<div class='chart-container'>", unsafe_allow_html=True)
+                st.markdown("<p class='chart-title'>👥 Total Customers Per Cluster</p>", unsafe_allow_html=True)
+                cluster_counts = df["cluster"].value_counts().reset_index()
+                cluster_counts.columns = ["Cluster", "Total Customers"]
+                fig3 = px.pie(cluster_counts, values="Total Customers", names="Cluster",
+                            color_discrete_sequence=px.colors.sequential.Rainbow)
+                fig3.update_layout(title_text="👥 Total Customers Per Cluster", title_x=0.5)
+                st.plotly_chart(fig3, use_container_width=True)
+                st.markdown("</div>", unsafe_allow_html=True)
+
+            with col4:
+                st.markdown("<div class='chart-container'>", unsafe_allow_html=True)
+                st.markdown("<p class='chart-title'>💸 Average Purchase Per Cluster</p>", unsafe_allow_html=True)
+                avg_purchase = df.groupby("cluster")["purchase_amount"].mean().reset_index()
+                fig4 = px.bar(avg_purchase, x="cluster", y="purchase_amount", color="cluster",
+                            labels={"cluster": "Cluster", "purchase_amount": "Avg Purchase"},
+                            color_continuous_scale="magma")
+                fig4.update_layout(title_text="💸 Average Purchase Per Cluster", title_x=0.5)
+                st.plotly_chart(fig4, use_container_width=True)
+                st.markdown("</div>", unsafe_allow_html=True)
+
+            # Add customer data table
+            st.markdown("<div class='chart-container'>", unsafe_allow_html=True)
+            st.markdown("<p class='chart-title'>📋 Latest Customer Data</p>", unsafe_allow_html=True)
+            st.dataframe(df[["customer_id", "name", "age", "purchase_amount", "cluster", "created_at"]].style.format({"purchase_amount": "${:.2f}"}), use_container_width=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+
+            # Add alert for high purchases
+            if df["purchase_amount"].max() > 400:
+                st.error("⚠️ Alert: High purchase amount detected! Check cluster data.")
+
+            # Export data
+            if st.download_button("📥 Download Data as CSV", df.to_csv(index=False), "customer_segments.csv", "text/csv"):
+                st.success("Data downloaded successfully!")
