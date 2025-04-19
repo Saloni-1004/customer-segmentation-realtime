@@ -6,11 +6,13 @@ import urllib.parse
 import time
 from datetime import timezone
 
-# Initialize session state for refresh timing
+# Initialize session state for refresh timing and data
 if 'last_refresh' not in st.session_state:
     st.session_state.last_refresh = time.time()
 if 'refresh_count' not in st.session_state:
     st.session_state.refresh_count = 0
+if 'df' not in st.session_state:
+    st.session_state.df = pd.DataFrame()
 
 # PostgreSQL Connection for Neon.tech
 DB_HOST = "ep-dry-violet-a4v38rh7-pooler.us-east-1.aws.neon.tech"
@@ -269,18 +271,16 @@ if auto_refresh:
     current_time = time.time()
     if current_time - st.session_state.last_refresh >= 5:
         st.cache_data.clear()
-        df = fetch_data(from_time, clusters, purchase_min, purchase_max)
-        render_dashboard(df)
+        st.session_state.df = fetch_data(from_time, clusters, purchase_min, purchase_max)
+        render_dashboard(st.session_state.df)
         st.session_state.last_refresh = current_time
         st.session_state.refresh_count += 1
-        # Add a small delay to allow rendering before next rerun
-        time.sleep(1)  # Prevents immediate rerun overlap
-        st.rerun()
 else:
     if st.button("🔄 Refresh Data"):
         st.cache_data.clear()
-        df = fetch_data(from_time, clusters, purchase_min, purchase_max)
-        render_dashboard(df)
+        st.session_state.df = fetch_data(from_time, clusters, purchase_min, purchase_max)
+        render_dashboard(st.session_state.df)
     else:
-        df = fetch_data(from_time, clusters, purchase_min, purchase_max)
-        render_dashboard(df)
+        if st.session_state.df.empty:
+            st.session_state.df = fetch_data(from_time, clusters, purchase_min, purchase_max)
+        render_dashboard(st.session_state.df)
