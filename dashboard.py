@@ -26,6 +26,8 @@ DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NA
 
 try:
     engine = create_engine(DATABASE_URL)
+    # Health check to keep the app alive
+    st.write("Running...")
 except Exception as e:
     st.error(f"⚠️ Database connection failed: {e}")
     st.stop()
@@ -118,15 +120,17 @@ st.markdown("<h1>📊 Real-Time Customer Segmentation Dashboard</h1>", unsafe_al
 # Sidebar for filters
 st.sidebar.header("🔍 Filters")
 
-# Time range filter
+# Time range filter (dynamic based on latest timestamp)
 time_range = st.sidebar.slider("Select Time Range (Hours)", 0, 168, 48)
-from_time = pd.Timestamp.now(tz=timezone.utc) - pd.Timedelta(hours=time_range)
+if st.session_state.last_timestamp:
+    from_time = st.session_state.last_timestamp - pd.Timedelta(hours=time_range)
+else:
+    from_time = pd.Timestamp.now(tz=timezone.utc) - pd.Timedelta(hours=time_range)
 
 # Cluster filter
 clusters = st.sidebar.multiselect("Select Clusters", options=sorted([0, 1, 2]), default=[0, 1, 2])
 
 # Purchase amount range
-@st.cache_data(ttl=5)
 def get_purchase_limits():
     query = "SELECT MIN(purchase_amount) as min, MAX(purchase_amount) as max FROM customer_segments"
     return pd.read_sql(query, engine).iloc[0]
@@ -145,7 +149,6 @@ except Exception as e:
 auto_refresh = st.sidebar.checkbox("Enable Auto-Refresh (5s)", value=True)
 
 # Debugging: Check total rows in table
-@st.cache_data(ttl=5)
 def check_table_count():
     query = "SELECT COUNT(*) as total_rows FROM customer_segments"
     return pd.read_sql(query, engine).iloc[0]['total_rows']
@@ -275,7 +278,6 @@ def render_dashboard(df):
 if auto_refresh:
     current_time = time.time()
     if current_time - st.session_state.last_refresh >= 5:
-        st.cache_data.clear()
         new_df = fetch_data(from_time, clusters, purchase_min, purchase_max)
         if not new_df.empty:
             st.session_state.df = new_df
@@ -284,7 +286,6 @@ if auto_refresh:
         st.session_state.refresh_count += 1
 else:
     if st.button("🔄 Refresh Data"):
-        st.cache_data.clear()
         new_df = fetch_data(from_time, clusters, purchase_min, purchase_max)
         if not new_df.empty:
             st.session_state.df = new_df
