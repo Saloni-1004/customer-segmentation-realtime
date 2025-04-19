@@ -13,7 +13,7 @@ logger.info("Consumer script starting...")
 
 # Kafka setup
 KAFKA_TOPIC = "customer-data"
-KAFKA_BOOTSTRAP_SERVERS = "localhost:9092"
+KAFKA_BOOTSTRAP_SERVERS = "localhost:9092"  # Update this if Kafka is deployed elsewhere
 
 # Connect to Kafka
 connected_kafka = False
@@ -42,11 +42,11 @@ cursor = None
 for attempt in range(max_retries):
     try:
         conn = psycopg2.connect(
-            host=os.getenv("PGHOST", "localhost"),  # Default to localhost if not set
-            port=os.getenv("PGPORT", "5432"),      # Default to 5432 if not set
-            dbname=os.getenv("PGDATABASE", "neondb"),
-            user=os.getenv("PGUSER", "neondb_owner"),
-            password=os.getenv("PGPASSWORD"),      # Removed default empty string
+            host="ep-dry-violet-a4v38rh7-pooler.us-east-1.aws.neon.tech",
+            port="5432",
+            dbname="neondb",
+            user="neondb_owner",
+            password="npg_5UbnztxlVuD1",
             sslmode='require'
         )
         cursor = conn.cursor()
@@ -79,9 +79,9 @@ except Exception as e:
     logger.error(f"Failed to create customer_segments table: {e}")
     exit(1)
 
-# Simple segmentation logic
+# Simple segmentation logic based on purchase_amount (since API data may not include segments)
 def determine_cluster(purchase_amount):
-    if purchase_amount is None:
+    if purchase_amount is None or purchase_amount < 0:
         return 0
     if purchase_amount < 100:
         return 0  # Low spenders
@@ -99,31 +99,26 @@ try:
         logger.info(f"Received message: {data}")
 
         try:
-            # Determine customer cluster based on segment or purchase_amount
-            segment = data.get("segment", "Segment-0")  # Default to Segment-0 if missing
-            cluster = int(segment.split('-')[1]) if segment.startswith("Segment-") else determine_cluster(data.get("purchase_amount", 0))
-            # Use current timestamp if data.get("timestamp") is missing or invalid
-            timestamp = data.get("timestamp")
-            if not timestamp or not isinstance(timestamp, (int, float, str)):
-                timestamp = time.time()
+            # Extract data from Fake Store API message
+            customer_id = data.get("id", data.get("customer_id", ""))
+            name = data.get("name", {}).get("firstname", "") + " " + data.get("name", {}).get("lastname", "")
+            age = data.get("age", 0)  # Assuming age might be added or default to 0
+            purchase_amount = data.get("purchase_amount", 0.0)
+            segment = data.get("segment", "Segment-0")
+            timestamp = data.get("timestamp", time.time())
+
+            # Determine cluster if segment is not provided or invalid
+            cluster = int(segment.split('-')[1]) if segment and segment.startswith("Segment-") else determine_cluster(purchase_amount)
+
             cursor.execute(
                 """
-                INSERT INTO customer_segments
-                (customer_id, name, age, purchase_amount, cluster, created_at)
+                INSERT INTO customer_segments (customer_id, name, age, purchase_amount, cluster, created_at)
                 VALUES (%s, %s, %s, %s, %s, to_timestamp(%s))
                 """,
-                (
-                    data.get("customer_id", ""),
-                    data.get("name", ""),
-                    data.get("age", 0),
-                    data.get("purchase_amount", 0.0),
-                    cluster,
-                    timestamp
-                )
+                (customer_id, name, age, purchase_amount, cluster, timestamp)
             )
             conn.commit()
-            logger.info(f"[✅] Inserted into customer_segments | Cluster: {cluster}")
-
+            logger.info(f"[✅] Inserted into customer_segments | Cluster: {cluster} | Customer: {name}")
         except Exception as db_err:
             logger.error(f"[❌ ERROR] DB Insert Failed: {db_err}")
             conn.rollback()
@@ -139,5 +134,4 @@ finally:
         conn.close()
     if consumer:
         consumer.close()
-
-    logger.info("Resources closed.") 
+    logger.info("Resources closed.")
