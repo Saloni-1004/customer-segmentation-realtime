@@ -124,6 +124,23 @@ def determine_cluster(purchase_amount):
     else:
         return 2  # High spenders
 
+# Function to safely handle purchase amounts to prevent DB overflow
+def safe_purchase_amount(amount):
+    try:
+        # Convert to float if it's a string
+        if isinstance(amount, str):
+            amount = float(amount)
+        
+        # Ensure amount is a number and within DB limits
+        if amount is None or not isinstance(amount, (int, float)):
+            return 0.0
+        
+        # Keep within PostgreSQL DECIMAL(10,2) limits (max: 99999999.99)
+        return min(float(amount), 999999.99)
+    except (ValueError, TypeError) as e:
+        logger.error(f"Error converting purchase amount: {e}")
+        return 0.0
+
 # Start consuming messages
 logger.info("Waiting for messages...")
 
@@ -133,27 +150,41 @@ try:
         logger.info(f"Received message: {data}")
 
         try:
-            # Handle both old (string name) and new (nested name) message formats
-            customer_id = data.get("id", data.get("customer_id", ""))
+            # Extract customer_id - handle both formats
+            customer_id = data.get("customer_id", data.get("id", ""))
+            
+            # Handle name - support both string and nested dict formats
             name_data = data.get("name", {})
             if isinstance(name_data, str):
                 name = name_data  # Old format: name is a string
             else:
-                name = f"{name_data.get('firstname', '')} {name_data.get('lastname', '')}".strip()  # New format: nested dict
-            age = data.get("age", 0)
-            purchase_amount = data.get("purchase_amount", 0.0)
-            segment = data.get("segment", "Segment-0")
-            timestamp = data.get("timestamp", time.time())
-
+                # New format: extract from nested dict
+                firstname = name_data.get("firstname", "")
+                lastname = name_data.get("lastname", "")
+                name = f"{firstname} {lastname}".strip()
+                if not name:
+                    name = f"Customer-{customer_id}"
+            
+            # Safe extraction of other fields
+            age = int(data.get("age", 0)) if data.get("age") is not None else 0
+            
+            # Safely process purchase amount to prevent overflow
+            purchase_amount = safe_purchase_amount(data.get("purchase_amount", 0.0))
+            
+            # Extract segment & timestamp
+            segment = data.get("segment", "")
+            timestamp = data.get("timestamp", time.time()) 
+            
             # Determine cluster
             cluster = int(segment.split('-')[1]) if segment and segment.startswith("Segment-") else determine_cluster(purchase_amount)
 
+            # Insert into database with safe values
             cursor.execute(
                 """
                 INSERT INTO customer_segments (customer_id, name, age, purchase_amount, cluster, created_at)
                 VALUES (%s, %s, %s, %s, %s, to_timestamp(%s))
                 """,
-                (customer_id, name, age, purchase_amount, cluster, timestamp)
+                (str(customer_id), name, age, purchase_amount, cluster, timestamp)
             )
             conn.commit()
             logger.info(f"[✅] Inserted into customer_segments | Cluster: {cluster} | Customer: {name}")
