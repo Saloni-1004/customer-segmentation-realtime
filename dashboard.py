@@ -30,8 +30,7 @@ if 'refresh_timer' not in st.session_state:
 if 'previous_data' not in st.session_state:
     st.session_state['previous_data'] = None
 
-# Function to establish database connection
-@st.cache_resource
+# Function to establish database connection (no caching)
 def get_database_engine():
     return create_engine(DATABASE_URL)
 
@@ -126,8 +125,9 @@ except Exception as e:
 # Function to fetch data with improved query
 def fetch_data():
     try:
-        # Safely handle cluster list for SQL
+        engine = get_database_engine()  # Recreate engine each time to avoid cache staleness
         cluster_str = ','.join(map(str, clusters)) if clusters else '0,1,2'
+        from_time = datetime.now(timezone.utc) - timedelta(hours=time_range)
         
         query = f"""
             SELECT record_id, customer_id, name, age, purchase_amount, cluster, created_at
@@ -142,15 +142,10 @@ def fetch_data():
             df = pd.read_sql(query, conn)
             if not df.empty:
                 st.session_state['last_data_timestamp'] = df['created_at'].max()
-                
-                # Check if data has changed from previous
-                prev_data = st.session_state['previous_data']
-                if prev_data is not None and len(df) > 0 and len(prev_data) > 0:
-                    # Compare record IDs to see if new data arrived
-                    if not set(df['record_id'].tolist()) == set(prev_data['record_id'].tolist()):
-                        st.balloons()  # Visual indicator that new data arrived
-                
-                # Store current data for next comparison
+                prev_data = st.session_state.get('previous_data', pd.DataFrame())
+                if not prev_data.empty and not df.empty:
+                    if df['record_id'].iloc[0] != prev_data['record_id'].iloc[0]:  # Check for new top record
+                        st.balloons()
                 st.session_state['previous_data'] = df.copy()
             return df
     except Exception as e:
@@ -196,7 +191,6 @@ else:
     st.success(f"✅ Showing {len(df)} records. Last updated: {st.session_state['last_data_timestamp']}")
     
     # Define custom color scales to match your screenshots
-    # These colors match the green/mint theme in your screenshots
     cluster_colors = {
         0: "#1e6e50",  # Dark Green
         1: "#38a169",  # Medium Green
