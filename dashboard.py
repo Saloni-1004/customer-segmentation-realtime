@@ -103,7 +103,7 @@ st.markdown("<h1>📊 Real-Time Customer Segmentation Dashboard</h1>", unsafe_al
 st.sidebar.header("🔍 Filters")
 
 # Time range filter
-time_range = st.sidebar.slider("Select Time Range (Hours)", 0, 168, 1)  # Extended to 168 hours (7 days)
+time_range = st.sidebar.slider("Select Time Range (Hours)", 0, 168, 168)  # Default to 168 hours to capture more data
 from_time = datetime.now() - timedelta(hours=time_range)
 
 # Cluster filter
@@ -112,18 +112,23 @@ clusters = st.sidebar.multiselect("Select Clusters", options=sorted([0, 1, 2]), 
 # Purchase amount range
 engine = get_database_engine()
 if engine:
-    query = "SELECT MIN(purchase_amount) as min, MAX(purchase_amount) as max FROM customer_segments"
-    try:
-        limits = pd.read_sql(query, engine).iloc[0]
-        purchase_min, purchase_max = st.sidebar.slider("Purchase Amount Range", 
-                                                    min_value=float(limits['min']) if not pd.isna(limits['min']) else 0,
-                                                    max_value=float(limits['max']) if not pd.isna(limits['max']) else 1000,
-                                                    value=(float(limits['min']) if not pd.isna(limits['min']) else 0, float(limits['max']) if not pd.isna(limits['max']) else 1000))
-    except Exception as e:
-        st.sidebar.error(f"⚠️ Error fetching purchase limits: {e}")
-        purchase_min, purchase_max = 0, 1000
+    with engine.connect() as conn:
+        result = conn.execute(text("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'customer_segments')"))
+        table_exists = result.fetchone()[0]
+        st.sidebar.write(f"Table exists: {table_exists}")
+        query = "SELECT MIN(purchase_amount) as min, MAX(purchase_amount) as max FROM customer_segments"
+        try:
+            limits = pd.read_sql(query, engine).iloc[0]
+            purchase_min, purchase_max = st.sidebar.slider("Purchase Amount Range", 
+                                                        min_value=float(limits['min']) if not pd.isna(limits['min']) else 0,
+                                                        max_value=float(limits['max']) if not pd.isna(limits['max']) else 1000,
+                                                        value=(float(limits['min']) if not pd.isna(limits['min']) else 0, float(limits['max']) if not pd.isna(limits['max']) else 1000))
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Error fetching purchase limits: {e}")
+            purchase_min, purchase_max = 0, 1000
 else:
     purchase_min, purchase_max = 0, 1000
+    st.sidebar.error("⚠️ Database connection failed.")
 
 # Auto-refresh and manual refresh
 auto_refresh = st.sidebar.checkbox("Enable Auto-Refresh (5s)", value=True)
@@ -143,6 +148,7 @@ def fetch_data():
             ORDER BY created_at DESC
         """
         df = pd.read_sql(query, engine, params=(from_time, purchase_min, purchase_max))
+        st.sidebar.write(f"Records fetched: {len(df) if df is not None else 0}")
         return df
     except Exception as e:
         st.warning(f"⚠️ Error fetching data: {e}")
