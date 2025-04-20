@@ -14,7 +14,14 @@ DB_PASSWORD = urllib.parse.quote_plus("npg_5UbnztxlVuD1")
 DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?sslmode=require"
 
 # Initialize database engine
-engine = create_engine(DATABASE_URL)
+try:
+    engine = create_engine(DATABASE_URL)
+    with engine.connect() as conn:
+        conn.execute(text("SELECT 1"))  # Test connection
+        print("Database connection established successfully.")
+except Exception as e:
+    print(f"Failed to connect to database: {e}")
+    exit(1)
 
 def fetch_real_data():
     response = requests.get("https://fakestoreapi.com/users")
@@ -48,14 +55,17 @@ while True:
         
         # Insert data into customer_segments table
         with engine.connect() as conn:
-            query = text("""
-                INSERT INTO customer_segments (customer_id, name, age, purchase_amount, cluster, created_at)
-                VALUES (:customer_id, :name, :age, :purchase_amount, :cluster, :created_at)
-            """)
-            conn.execute(query, **data)
-            conn.commit()
+            try:
+                query = text("""
+                    INSERT INTO customer_segments (customer_id, name, age, purchase_amount, cluster, created_at)
+                    VALUES (:customer_id, :name, :age, :purchase_amount, :cluster, :created_at)
+                """)
+                conn.execute(query, **data)  # Corrected to use dictionary unpacking with text()
+                conn.commit()
+                print(f"Successfully inserted record with customer_id: {customer_id}")
+            except Exception as e:
+                print(f"Insertion failed: {e}")
         
-        print(f"Inserted: {data}")
         customer_id_counter += 1  # Increment customer_id
         name_counter += 1  # Increment name counter
     
