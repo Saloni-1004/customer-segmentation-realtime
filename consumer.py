@@ -1,9 +1,10 @@
 import json
 import psycopg2
-from kafka import KafkaConsumer
+from kafka import KafkaConsumer, TopicPartition
 import time
 import logging
 import os
+from kafka.errors import KafkaError
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -13,34 +14,55 @@ logger.info("Consumer script starting...")
 
 # Kafka setup
 KAFKA_TOPIC = "customer-data"
-KAFKA_BOOTSTRAP_SERVERS = "localhost:9092"  # Update if Kafka is deployed elsewhere
+KAFKA_BOOTSTRAP_SERVERS = "127.0.0.1:9092"  # Force IPv4 to avoid IPv6 issues
 
-# Connect to Kafka
+# Connect to Kafka with topic existence check
 connected_kafka = False
-while not connected_kafka:
+max_retries = 10
+retry_delay = 5
+while not connected_kafka and max_retries > 0:
     try:
         consumer = KafkaConsumer(
-            KAFKA_TOPIC,
             bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
             value_deserializer=lambda m: json.loads(m.decode("utf-8")) if m else {},
             auto_offset_reset="earliest",
             enable_auto_commit=True,
             group_id="customer-group"
         )
+        
+        # Check if topic exists
+        topics = consumer.topics()
+        if KAFKA_TOPIC not in topics:
+            logger.warning(f"Topic {KAFKA_TOPIC} not found. Waiting for topic creation...")
+            time.sleep(retry_delay)
+            max_retries -= 1
+            continue
+        
+        # Seek to end once topic is found
+        consumer.subscribe([KAFKA_TOPIC])
         consumer.seek_to_end()  # Start from the latest offset
         logger.info("Kafka consumer initialized successfully and set to latest offset.")
         connected_kafka = True
-    except Exception as e:
+    except KafkaError as e:
         logger.error(f"Failed to initialize Kafka consumer: {e}")
-        logger.info("Retrying in 5 seconds...")
-        time.sleep(5)
+        logger.info(f"Retrying in {retry_delay} seconds... ({max_retries} attempts left)")
+        time.sleep(retry_delay)
+        max_retries -= 1
+    except Exception as e:
+        logger.error(f"Unexpected error during Kafka connection: {e}")
+        time.sleep(retry_delay)
+        max_retries -= 1
+
+if not connected_kafka:
+    logger.critical("Failed to connect to Kafka after maximum retries. Exiting.")
+    exit(1)
 
 # Neon PostgreSQL connection with retry
-max_retries = 5
-retry_delay = 5
+max_retries_db = 5
+retry_delay_db = 5
 conn = None
 cursor = None
-for attempt in range(max_retries):
+for attempt in range(max_retries_db):
     try:
         conn = psycopg2.connect(
             host="ep-dry-violet-a4v38rh7-pooler.us-east-1.aws.neon.tech",
@@ -54,9 +76,9 @@ for attempt in range(max_retries):
         logger.info("Connected to Neon PostgreSQL successfully.")
         break
     except Exception as e:
-        logger.error(f"Failed to connect to PostgreSQL (attempt {attempt + 1}/{max_retries}): {e}")
-        if attempt < max_retries - 1:
-            time.sleep(retry_delay)
+        logger.error(f"Failed to connect to PostgreSQL (attempt {attempt + 1}/{max_retries_db}): {e}")
+        if attempt < max_retries_db - 1:
+            time.sleep(retry_delay_db)
         else:
             logger.critical("Max retries reached. Exiting.")
             exit(1)
