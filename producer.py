@@ -51,7 +51,7 @@ def fetch_fake_store_api():
         logger.error(f"Failed to fetch data from Fake Store API: {e}")
         return []
 
-# Generate realistic customer data
+# Generate realistic customer data with bounded purchase amounts
 def generate_customer_data(user):
     # Generate a unique customer_id with a chance for new customers
     base_id = str(user.get("id", 0))
@@ -63,28 +63,51 @@ def generate_customer_data(user):
     # Get or generate name data
     if customer_id in customer_profiles:
         profile = customer_profiles[customer_id]
-        name_data = profile["name"]
-        firstname = name_data["firstname"]
-        lastname = name_data["lastname"]
+        name_data = profile.get("name", {})
+        if isinstance(name_data, dict):
+            firstname = name_data.get("firstname", "")
+            lastname = name_data.get("lastname", "")
+        else:
+            firstname = names.get_first_name()
+            lastname = names.get_last_name()
     else:
         try:
-            name_data = user["name"]
-            firstname = name_data["firstname"]
-            lastname = name_data["lastname"]
+            name_data = user.get("name", {})
+            firstname = name_data.get("firstname", names.get_first_name())
+            lastname = name_data.get("lastname", names.get_last_name())
         except (KeyError, TypeError):
-            firstname = names.get_first_name()  # Generate random first name
-            lastname = names.get_last_name()   # Generate random last name
+            firstname = names.get_first_name()
+            lastname = names.get_last_name()
 
-    # Realistic purchase amount update
+    # Ensure age is available
+    if customer_id in customer_profiles:
+        age = customer_profiles[customer_id].get("age", random.randint(18, 80))
+    else:
+        age = user.get("age", random.randint(18, 80))
+        # Try to get age from nested structure if available
+        if not isinstance(age, int):
+            try:
+                age = user.get("dob", {}).get("age", random.randint(18, 80))
+            except (KeyError, TypeError):
+                age = random.randint(18, 80)
+
+    # Realistic purchase amount update - IMPORTANT: Keep under database limit (999,999.99)
     if customer_id in customer_profiles:
         profile = customer_profiles[customer_id]
-        previous_amount = profile['purchase_amount']
-        change_percent = random.uniform(-0.10, 0.20)
+        previous_amount = profile.get('purchase_amount', 0)
+        # Calculate new amount with realistic changes
+        change_percent = random.uniform(-0.10, 0.20)  # -10% to +20% change
+        
+        # Ensure purchase amount stays within database limits (precision 10, scale 2)
         new_amount = round(max(10.0, previous_amount * (1 + change_percent)), 2)
+        new_amount = min(new_amount, 999999.99)  # Ensure below database limit
+        
+        # Occasional big purchase (but still within limits)
         if random.random() < 0.05:
-            new_amount = round(random.uniform(500, 2000), 2)
+            new_amount = round(random.uniform(500, 5000), 2)
+            new_amount = min(new_amount, 999999.99)
     else:
-        age = user.get("dob", {}).get("age", random.randint(18, 80))
+        # New customer - reasonable purchase amount
         new_amount = round(random.uniform(10, 2000), 2)
 
     # Determine segment based on purchase amount
@@ -95,18 +118,21 @@ def generate_customer_data(user):
     else:
         segment = "Segment-2"  # High spenders
 
-    # Update or create profile
-    profile = {
+    # Create data object with only the existing columns
+    data = {
+        "id": base_id,  # Keep original ID for reference
         "customer_id": customer_id,
         "name": {"firstname": firstname, "lastname": lastname},
-        "age": age if 'age' in locals() else random.randint(18, 80),
+        "age": age,
         "purchase_amount": new_amount,
         "segment": segment,
         "timestamp": time.time()
     }
-    customer_profiles[customer_id] = profile
+    
+    # Update profile in storage
+    customer_profiles[customer_id] = data
 
-    return profile
+    return data
 
 # Function to save customer profiles periodically
 def save_customer_profiles():
@@ -120,28 +146,33 @@ def save_customer_profiles():
 logger.info("Starting data production loop...")
 save_counter = 0
 
-while True:
-    users = fetch_fake_store_api()
-    if not users:
-        logger.warning("Failed to fetch data from Fake Store API, retrying in 5 seconds...")
+try:
+    while True:
+        users = fetch_fake_store_api()
+        if not users:
+            users = [{"id": i} for i in range(1, 11)]  # Fallback if API fails
+            logger.warning("Using fallback user data")
+        
+        for user in users:
+            try:
+                data = generate_customer_data(user)
+                producer.send('customer-data', value=data)
+                full_name = f"{data['name']['firstname']} {data['name']['lastname']}"
+                logger.info(f"Sent: Customer ID: {data['customer_id']}, Name: {full_name}, Age: {data['age']}, Amount: ${data['purchase_amount']:.2f}")
+                # Short delay between messages to avoid flooding
+                time.sleep(0.2)
+            except Exception as e:
+                logger.error(f"Error processing user data: {e}")
+        
+        # Save customer profiles periodically
+        save_counter += 1
+        if save_counter >= 5:
+            save_customer_profiles()
+            save_counter = 0
+        
+        logger.info(f"Processed {len(users)} users. Waiting 5 seconds before next batch...")
         time.sleep(5)
-        continue
-    
-    for user in users:
-        try:
-            data = generate_customer_data(user)
-            producer.send('customer-data', value=data)
-            logger.info(f"Sent: Customer ID: {data['customer_id']}, Name: {data['name']['firstname']} {data['name']['lastname']}, Age: {data['age']}, Amount: ${data['purchase_amount']}")
-        except Exception as e:
-            logger.error(f"Error processing user data: {e}")
-    
-    # Save customer profiles periodically (every 5 batches)
-    save_counter += 1
-    if save_counter >= 5:
-        save_customer_profiles()
-        save_counter = 0
-    
-    logger.info(f"Processed {len(users)} users. Waiting 5 seconds before next batch...")
-    time.time()
-
-producer.flush()
+except KeyboardInterrupt:
+    logger.info("Producer stopped by user")
+    producer.flush()
+    save_customer_profiles()
