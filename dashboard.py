@@ -15,7 +15,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
     page_icon="📊",
     menu_items={
-        'About': "Real-Time Customer Segmentation Dashboard - Final Year Project"
+        'About': "Real-Time Customer Segmentation Dashboard"
     }
 )
 
@@ -78,17 +78,13 @@ if 'previous_data' not in st.session_state:
     st.session_state['previous_data'] = None
 
 # Function to establish database connection with caching
-@st.cache_data
+@st.cache_data(ttl=300)
 def get_database_engine():
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            return create_engine(DATABASE_URL)
-        except Exception as e:
-            if attempt < max_retries - 1:
-                time.sleep(2)  # Wait before retrying
-                continue
-            raise Exception(f"Failed to connect to database after {max_retries} attempts: {str(e)}")
+    try:
+        return create_engine(DATABASE_URL)
+    except Exception as e:
+        st.error(f"Database connection error: {str(e)}.")
+        return None
 
 # Main title with updated styling
 st.markdown("""
@@ -109,35 +105,38 @@ st.sidebar.markdown(f"### 🕒 Last refresh: {st.session_state['last_refresh_tim
 st.sidebar.markdown(f"### 🔄 Refresh count: {st.session_state['refresh_counter']}")
 
 # Connect to database and show status
+db_connected = False
 try:
     engine = get_database_engine()
-    with engine.connect() as conn:
-        st.sidebar.markdown("""
-            <div style='background-color:#064e3b; color:#d1fae5; padding:12px; border-radius:8px; margin-bottom:20px;'>
-                <span style='font-weight:bold'>✅ Database connected successfully</span>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        result = conn.execute(text("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'customer_segments')"))
-        table_exists = result.fetchone()[0]
-        
-        if table_exists:
-            result = conn.execute(text("SELECT COUNT(*) FROM customer_segments"))
-            count = result.fetchone()[0]
-            st.sidebar.markdown(f"""
+    if engine:
+        with engine.connect() as conn:
+            st.sidebar.markdown("""
                 <div style='background-color:#064e3b; color:#d1fae5; padding:12px; border-radius:8px; margin-bottom:20px;'>
-                    <span style='font-weight:bold'>✅ Found customer_segments table with {count} records</span>
+                    <span style='font-weight:bold'>✅ Database connected successfully</span>
                 </div>
             """, unsafe_allow_html=True)
-            if count == 0:
-                st.sidebar.warning("⚠️ The customer_segments table is empty. Add records to display data.")
-        else:
-            st.sidebar.error("❌ Table 'customer_segments' does not exist.")
-            st.stop()
+            
+            result = conn.execute(text("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'customer_segments')"))
+            table_exists = result.fetchone()[0]
+            
+            if table_exists:
+                result = conn.execute(text("SELECT COUNT(*) FROM customer_segments"))
+                count = result.fetchone()[0]
+                st.sidebar.markdown(f"""
+                    <div style='background-color:#064e3b; color:#d1fae5; padding:12px; border-radius:8px; margin-bottom:20px;'>
+                        <span style='font-weight:bold'>✅ Found customer_segments table with {count} records</span>
+                    </div>
+                """, unsafe_allow_html=True)
+                if count == 0:
+                    st.sidebar.warning("⚠️ The customer_segments table is empty.")
+                else:
+                    db_connected = True
+            else:
+                st.sidebar.error("❌ Table 'customer_segments' does not exist.")
+    else:
+        st.sidebar.error("❌ Database engine could not be created.")
 except Exception as e:
-    st.sidebar.error(f"❌ Database connection error: {str(e)}. Check credentials or network.")
-    st.error(f"Database connection failed: {str(e)}. Please verify the database settings and try again.")
-    st.stop()
+    st.sidebar.error(f"❌ Database connection error: {str(e)}.")
 
 # Sidebar filters section with improved styling
 st.sidebar.markdown("""
@@ -158,16 +157,6 @@ refresh_interval = st.sidebar.selectbox(
     options=[5, 10, 30],
     format_func=lambda x: f"{x} seconds",
     help="Choose how often the dashboard refreshes",
-    label_visibility="collapsed"
-)
-
-# Pagination settings
-st.sidebar.markdown("<p style='margin-bottom:5px; color:#94a3b8;'>Records to Display</p>", unsafe_allow_html=True)
-page_size = st.sidebar.selectbox(
-    "Records per Page",
-    options=[50, 100, 500, "All"],
-    index=3,  # Default to "All"
-    help="Choose how many records to display in the table",
     label_visibility="collapsed"
 )
 
@@ -206,72 +195,38 @@ clusters = st.sidebar.multiselect(
 if not clusters:
     clusters = [0, 1, 2]
 
-# Purchase amount range with robust defaults
-try:
-    with engine.connect() as conn:
-        min_query = text("SELECT COALESCE(MIN(purchase_amount), 0) as min FROM customer_segments")
-        max_query = text("SELECT COALESCE(MAX(purchase_amount), 10000) as max FROM customer_segments")
-        
-        min_result = conn.execute(min_query).fetchone()
-        max_result = conn.execute(max_query).fetchone()
-        
-        min_val = float(min_result[0])
-        max_val = float(max_result[0])
-        
-        if min_val >= max_val:
-            min_val = 0
-            max_val = 10000
-        
-        st.sidebar.markdown("<p style='margin-bottom:5px; color:#94a3b8;'>Purchase Amount (₹)</p>", unsafe_allow_html=True)
-        purchase_min, purchase_max = st.sidebar.slider(
-            "Purchase Range", 
-            min_val, max_val, (min_val, max_val), 
-            key="purchase_amount_slider", 
-            label_visibility="collapsed"
-        )
-except Exception as e:
-    st.sidebar.warning(f"Could not fetch purchase limits: {str(e)[:100]}. Using defaults.")
-    st.sidebar.markdown("<p style='margin-bottom:5px; color:#94a3b8;'>Purchase Amount (₹)</p>", unsafe_allow_html=True)
-    purchase_min, purchase_max = st.sidebar.slider(
-        "Purchase Range", 0.0, 10000.0, (0.0, 10000.0), 
-        label_visibility="collapsed"
-    )
-
-# Function to fetch data without limit
+# Function to fetch data from database
 def fetch_data():
-    try:
-        engine = get_database_engine()
-        cluster_str = ','.join(map(str, clusters)) if clusters else '0,1,2'
-        from_time = datetime.now(timezone.utc) - timedelta(hours=time_range)
-        
-        query = f"""
-            SELECT record_id, customer_id, name, age, purchase_amount, cluster, created_at
-            FROM customer_segments
-            WHERE created_at >= '{from_time.isoformat()}'
-            AND cluster IN ({cluster_str})
-            AND purchase_amount BETWEEN {purchase_min} AND {purchase_max}
-            ORDER BY created_at DESC
-        """
-        if page_size != "All":
-            query += f" LIMIT {page_size}"
-        
-        with engine.connect() as conn:
-            df = pd.read_sql(query, conn)
-            if df is not None and not df.empty:
-                st.session_state['last_data_timestamp'] = df['created_at'].max()
-                prev_data = st.session_state.get('previous_data', pd.DataFrame())
-                if not prev_data.empty and not df.empty:
-                    if df['record_id'].iloc[0] != prev_data['record_id'].iloc[0]:
-                        st.balloons()
-                st.session_state['previous_data'] = df.copy()
-                if len(df) > 1000:
-                    st.warning("⚠️ Large dataset detected (>1000 records). Consider using pagination to improve performance.")
-            else:
-                st.session_state['last_data_timestamp'] = None
-            return df if df is not None else pd.DataFrame()
-    except Exception as e:
-        st.error(f"Error fetching data: {str(e)}. Check database connection or query filters.")
-        return pd.DataFrame()
+    if db_connected:
+        try:
+            cluster_str = ','.join(map(str, clusters)) if clusters else '0,1,2'
+            from_time = datetime.now(timezone.utc) - timedelta(hours=time_range)
+            
+            query = f"""
+                SELECT record_id, customer_id, name, age, purchase_amount, cluster, created_at
+                FROM customer_segments
+                WHERE created_at >= '{from_time.isoformat()}'
+                AND cluster IN ({cluster_str})
+                ORDER BY created_at DESC
+            """
+            
+            with engine.connect() as conn:
+                df = pd.read_sql(query, conn)
+                if df is not None and not df.empty:
+                    st.session_state['last_data_timestamp'] = df['created_at'].max()
+                    prev_data = st.session_state.get('previous_data', pd.DataFrame())
+                    if not prev_data.empty and not df.empty:
+                        if df['record_id'].iloc[0] != prev_data['record_id'].iloc[0]:
+                            st.balloons()
+                    st.session_state['previous_data'] = df.copy()
+                    return df
+                else:
+                    return None
+        except Exception as e:
+            st.warning(f"⚠️ Error fetching data: {str(e)}.")
+            return None
+    else:
+        return None
 
 # Manual refresh button
 col_refresh, col_space = st.columns([1, 3])
@@ -289,34 +244,6 @@ with col_refresh:
 # Dashboard rendering
 if df is None or df.empty:
     st.warning("⚠️ No data available. Check database connection, filters, or add records to customer_segments.")
-    st.markdown("### Database Diagnostic")
-    try:
-        with engine.connect() as conn:
-            test_query = text("SELECT NOW() as current_time")
-            result = conn.execute(test_query).fetchone()
-            st.success(f"Database is accessible. Current time: {result[0]}")
-            
-            latest_query = text("SELECT * FROM customer_segments ORDER BY created_at DESC")  # Removed LIMIT 5
-            latest_df = pd.read_sql(latest_query, conn)
-            if latest_df is not None and not latest_df.empty:
-                st.success(f"Found {len(latest_df)} recent records in the database. Here's a sample:")
-                st.dataframe(latest_df, use_container_width=True)
-            else:
-                st.error("No records found in the customer_segments table. Please add data.")
-                # Fallback sample data
-                sample_data = pd.DataFrame({
-                    'record_id': [1, 2, 3],
-                    'customer_id': ['C001', 'C002', 'C003'],
-                    'name': ['John Doe', 'Jane Smith', 'Alice Johnson'],
-                    'age': [30, 45, 25],
-                    'purchase_amount': [1500.50, 3500.75, 7500.25],
-                    'cluster': [0, 1, 2],
-                    'created_at': ['2025-04-20 10:00:00', '2025-04-20 11:00:00', '2025-04-20 12:00:00']
-                })
-                st.markdown("### Sample Data Preview")
-                st.dataframe(sample_data, use_container_width=True)
-    except Exception as e:
-        st.error(f"Diagnostic query failed: {str(e)}. Check database settings.")
 else:
     # Success message
     st.markdown(f"""
@@ -526,7 +453,7 @@ else:
         st.dataframe(
             df_display[['record_id', 'customer_id', 'name', 'age', 'purchase_amount', 'cluster', 'created_at']], 
             use_container_width=True,
-            height=600  # Increased for more rows
+            height=600
         )
     else:
         st.dataframe(
@@ -542,6 +469,71 @@ else:
         "text/csv",
         key="download-csv"
     )
+    
+    # Additional section for more realistic data visualization
+    st.markdown("<h3 style='color:#d1d5db;'>📈 Customer Behavior Insights</h3>", unsafe_allow_html=True)
+    col5, col6 = st.columns(2)
+    
+    with col5:
+        # Purchase frequency over time
+        st.markdown("<h4 style='color:#d1d5db;'>Purchase Frequency Timeline</h4>", unsafe_allow_html=True)
+        df['date'] = pd.to_datetime(df['created_at']).dt.date
+        purchase_timeline = df.groupby('date').size().reset_index(name='count')
+        
+        fig5 = px.line(
+            purchase_timeline, 
+            x='date', 
+            y='count',
+            title="Daily Purchase Frequency",
+            labels={"date": "Date", "count": "Number of Purchases"},
+            template="plotly_dark",
+            markers=True
+        )
+        
+        fig5.update_layout(
+            height=300,
+            plot_bgcolor="#1e293b",
+            paper_bgcolor="#1e293b",
+            font=dict(color="#e2e8f0"),
+            xaxis=dict(title="Date", titlefont=dict(size=14), gridcolor="#475569"),
+            yaxis=dict(title="Number of Purchases", titlefont=dict(size=14), gridcolor="#475569")
+        )
+        
+        st.plotly_chart(fig5, use_container_width=True)
+    
+    with col6:
+        # Age groups distribution
+        st.markdown("<h4 style='color:#d1d5db;'>Age Group Distribution</h4>", unsafe_allow_html=True)
+        
+        # Create age bins
+        bins = [18, 25, 35, 45, 55, 65, 100]
+        labels = ['18-24', '25-34', '35-44', '45-54', '55-64', '65+']
+        df['age_group'] = pd.cut(df['age'], bins=bins, labels=labels, right=False)
+        
+        age_distribution = df.groupby('age_group').size().reset_index(name='count')
+        
+        fig6 = px.bar(
+            age_distribution,
+            x='age_group',
+            y='count',
+            title="Customer Age Group Distribution",
+            labels={"age_group": "Age Group", "count": "Number of Customers"},
+            template="plotly_dark",
+            color='age_group',
+            color_discrete_sequence=px.colors.qualitative.Bold
+        )
+        
+        fig6.update_layout(
+            height=300,
+            plot_bgcolor="#1e293b",
+            paper_bgcolor="#1e293b",
+            font=dict(color="#e2e8f0"),
+            xaxis=dict(title="Age Group", titlefont=dict(size=14), gridcolor="#475569"),
+            yaxis=dict(title="Number of Customers", titlefont=dict(size=14), gridcolor="#475569"),
+            showlegend=False
+        )
+        
+        st.plotly_chart(fig6, use_container_width=True)
 
 # Footer with project info
 st.markdown("---")
@@ -555,7 +547,7 @@ with col_mid:
         <div style='text-align:center;'>
             <p style='color:#94a3b8;'>Real-Time Customer Segmentation System</p>
             <p style='color:#64748b; font-size:0.8em;'>Final Year College Project | Kafka | PostgreSQL | Streamlit</p>
-            <p style='color:#64748b; font-size:0.8em;'>Database Optimization: Consider adding indexes on created_at, cluster, and purchase_amount.</p>
+            <p style='color:#64748b; font-size:0.8em;'>System: Automatic Customer Clustering with K-means</p>
         </div>
     """, unsafe_allow_html=True)
 
