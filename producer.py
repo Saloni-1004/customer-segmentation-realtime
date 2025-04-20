@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # Initialize Kafka producer
 try:
     producer = KafkaProducer(
-        bootstrap_servers='localhost:9092',  # Update if Kafka is deployed elsewhere
+        bootstrap_servers='localhost:9092',
         value_serializer=lambda v: json.dumps(v).encode('utf-8')
     )
     logger.info("Kafka producer initialized successfully")
@@ -50,71 +50,52 @@ def fetch_fake_store_api():
         logger.error(f"Failed to fetch data from Fake Store API: {e}")
         return []
 
-# Generate consistent customer data
+# Generate realistic customer data
 def generate_customer_data(user):
-    customer_id = str(user.get("id", 0))
-    
-    # Check if this customer already exists in our profiles
+    # Generate a unique customer_id with a chance for new customers
+    base_id = str(user.get("id", 0))
+    if random.random() < 0.2:  # 20% chance for a new customer
+        customer_id = str(int(time.time()) + random.randint(1000, 9999))  # Unique ID
+    else:
+        customer_id = base_id
+
+    # Check if this customer already exists
     if customer_id in customer_profiles:
         profile = customer_profiles[customer_id]
-        
-        # Update only the purchase amount with a realistic change
-        # This simulates real-time purchases while keeping demographic data consistent
+        # Realistic purchase amount update (-10% to +20% change)
         previous_amount = profile['purchase_amount']
-        change_percent = random.uniform(-0.15, 0.25)  # -15% to +25% change
-        new_amount = round(previous_amount * (1 + change_percent), 2)
-        
-        # Occasionally have a big purchase (e.g., 5% chance)
+        change_percent = random.uniform(-0.10, 0.20)
+        new_amount = round(max(10.0, previous_amount * (1 + change_percent)), 2)  # Cap at $10 min
+        # Occasional big purchase (5% chance, up to $2000)
         if random.random() < 0.05:
-            new_amount = round(new_amount * random.uniform(3, 8), 2)
-            
-        # Ensure minimum purchase amount
-        new_amount = max(5.0, new_amount)
-        
-        profile['purchase_amount'] = new_amount
-        
-        # Update segment based on new amount
-        if new_amount < 100:
-            profile['segment'] = "Segment-0"  # Low spenders
-        elif new_amount < 500:
-            profile['segment'] = "Segment-1"  # Medium spenders
-        else:
-            profile['segment'] = "Segment-2"  # High spenders
-            
-        profile['timestamp'] = time.time()
+            new_amount = round(random.uniform(500, 2000), 2)
     else:
-        # Create new profile for this customer
         firstname = user["name"]["firstname"]
         lastname = user["name"]["lastname"]
-        
-        # Set consistent demographic data
-        age = random.randint(18, 80)
-        
-        # Initial purchase amount 
-        purchase_amount = round(random.uniform(10, 1000), 2)
-        
-        # Segment based on purchase amount
-        if purchase_amount < 100:
-            segment = "Segment-0"  # Low spenders
-        elif purchase_amount < 500:
-            segment = "Segment-1"  # Medium spenders
-        else:
-            segment = "Segment-2"  # High spenders
-        
-        profile = {
-            "id": customer_id,
-            "customer_id": customer_id,
-            "name": {"firstname": firstname, "lastname": lastname},
-            "email": user.get("email", ""),
-            "age": age,
-            "purchase_amount": purchase_amount,
-            "segment": segment,
-            "timestamp": time.time()
-        }
-        
-        # Store the new profile
-        customer_profiles[customer_id] = profile
-        
+        # Realistic age based on API data or random if new
+        age = user.get("dob", {}).get("age", random.randint(18, 80))
+        # Realistic initial purchase amount
+        new_amount = round(random.uniform(10, 2000), 2)
+
+    # Determine segment based on purchase amount
+    if new_amount < 100:
+        segment = "Segment-0"  # Low spenders
+    elif new_amount < 500:
+        segment = "Segment-1"  # Medium spenders
+    else:
+        segment = "Segment-2"  # High spenders
+
+    # Update or create profile
+    profile = {
+        "customer_id": customer_id,
+        "name": {"firstname": firstname, "lastname": lastname},
+        "age": age,
+        "purchase_amount": new_amount,
+        "segment": segment,
+        "timestamp": time.time()
+    }
+    customer_profiles[customer_id] = profile
+
     return profile
 
 # Function to save customer profiles periodically
@@ -131,7 +112,6 @@ save_counter = 0
 
 while True:
     users = fetch_fake_store_api()
-    
     if not users:
         logger.warning("Failed to fetch data from Fake Store API, retrying in 5 seconds...")
         time.sleep(5)
