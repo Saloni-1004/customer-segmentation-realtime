@@ -27,7 +27,8 @@ while not connected_kafka and max_retries > 0:
             value_deserializer=lambda m: json.loads(m.decode("utf-8")) if m else {},
             auto_offset_reset="earliest",
             enable_auto_commit=True,
-            group_id="customer-group"
+            group_id="customer-group",
+            api_version=(3, 9, 0)  # Match your Kafka server version
         )
         
         # Check if topic exists
@@ -38,10 +39,20 @@ while not connected_kafka and max_retries > 0:
             max_retries -= 1
             continue
         
-        # Seek to end once topic is found
+        # Subscribe to topic first, then wait for assignment
         consumer.subscribe([KAFKA_TOPIC])
-        consumer.seek_to_end()  # Start from the latest offset
-        logger.info("Kafka consumer initialized successfully and set to latest offset.")
+        
+        # Poll to trigger partition assignment
+        consumer.poll(timeout_ms=5000)
+        
+        # Now partitions should be assigned
+        if not consumer.assignment():
+            logger.warning("No partitions assigned yet. Waiting...")
+            time.sleep(retry_delay)
+            max_retries -= 1
+            continue
+        
+        logger.info("Kafka consumer initialized successfully.")
         connected_kafka = True
     except KafkaError as e:
         logger.error(f"Failed to initialize Kafka consumer: {e}")
@@ -102,7 +113,7 @@ except Exception as e:
     logger.error(f"Failed to create customer_segments table: {e}")
     exit(1)
 
-# Simple segmentation logic based on purchase_amount
+# Updated segmentation logic to match producer exactly
 def determine_cluster(purchase_amount):
     if purchase_amount is None or purchase_amount < 0:
         return 0
