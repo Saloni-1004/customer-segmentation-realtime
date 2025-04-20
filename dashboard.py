@@ -17,13 +17,15 @@ DB_USER = "neondb_owner"
 DB_PASSWORD = urllib.parse.quote_plus("npg_5UbnztxlVuD1")
 DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?sslmode=require"
 
-# Initialize session state for persistent storage
+# Initialize session state for persistent storage - PROPERLY INITIALIZED FIRST
 if 'refresh_counter' not in st.session_state:
-    st.session_state.refresh_counter = 0
+    st.session_state['refresh_counter'] = 0
 if 'last_refresh_time' not in st.session_state:
-    st.session_state.last_refresh_time = datetime.now().strftime('%H:%M:%S')
+    st.session_state['last_refresh_time'] = datetime.now().strftime('%H:%M:%S')
 if 'last_data_timestamp' not in st.session_state:
-    st.session_state.last_data_timestamp = None
+    st.session_state['last_data_timestamp'] = None
+if 'refresh_timer' not in st.session_state:
+    st.session_state['refresh_timer'] = time.time()
 
 # Function to establish database connection
 @st.cache_resource
@@ -32,8 +34,8 @@ def get_database_engine():
 
 # Create sidebar status indicators
 st.sidebar.markdown("# 🟢 Dashboard Running")
-st.sidebar.markdown(f"### 🕒 Last refresh: {st.session_state.last_refresh_time}")
-st.sidebar.markdown(f"### 🔄 Refresh count: {st.session_state.refresh_counter}")
+st.sidebar.markdown(f"### 🕒 Last refresh: {st.session_state['last_refresh_time']}")
+st.sidebar.markdown(f"### 🔄 Refresh count: {st.session_state['refresh_counter']}")
 
 # Connect to database and show status
 try:
@@ -97,11 +99,14 @@ except Exception as e:
 # Function to fetch data - critical part for real-time updates
 def fetch_data():
     try:
+        # Safely handle cluster list for SQL
+        cluster_str = ','.join(map(str, clusters)) if clusters else '0,1,2'
+        
         query = f"""
             SELECT record_id, customer_id, name, age, purchase_amount, cluster, created_at
             FROM customer_segments
             WHERE created_at >= '{from_time.isoformat()}'
-            AND cluster IN ({','.join(map(str, clusters))})
+            AND cluster IN ({cluster_str})
             AND purchase_amount BETWEEN {purchase_min} AND {purchase_max}
             ORDER BY created_at DESC
             LIMIT 100
@@ -109,7 +114,7 @@ def fetch_data():
         with engine.connect() as conn:
             df = pd.read_sql(query, conn)
             if not df.empty:
-                st.session_state.last_data_timestamp = df['created_at'].max()
+                st.session_state['last_data_timestamp'] = df['created_at'].max()
             return df
     except Exception as e:
         st.error(f"Error fetching data: {str(e)}")
@@ -119,16 +124,16 @@ def fetch_data():
 if st.button("🔄 Manual Refresh"):
     with st.spinner("Fetching real-time data..."):
         df = fetch_data()
-        st.session_state.refresh_counter += 1
-        st.session_state.last_refresh_time = datetime.now().strftime('%H:%M:%S')
+        st.session_state['refresh_counter'] += 1
+        st.session_state['last_refresh_time'] = datetime.now().strftime('%H:%M:%S')
 else:
     df = fetch_data()
-    st.session_state.refresh_counter += 1
-    st.session_state.last_refresh_time = datetime.now().strftime('%H:%M:%S')
+    st.session_state['refresh_counter'] += 1
+    st.session_state['last_refresh_time'] = datetime.now().strftime('%H:%M:%S')
     if df.empty:
         st.warning("⚠️ No new data fetched. Check database or filters.")
 
-# Dashboard rendering
+# Dashboard rendering - Enhanced with improved styling to match your screenshot
 if df.empty:
     st.warning("⚠️ No data available. Check database connection or data filters.")
     
@@ -150,44 +155,65 @@ if df.empty:
     except Exception as e:
         st.error(f"Diagnostic query failed: {str(e)}")
 else:
-    st.success(f"✅ Showing {len(df)} records. Last updated: {st.session_state.last_data_timestamp}")
+    st.success(f"✅ Showing {len(df)} records. Last updated: {st.session_state['last_data_timestamp']}")
+    
+    # Dark theme styling with green accent colors
+    plot_template = "plotly_dark"
+    cluster_colors = {0: "#1E6E50", 1: "#38A169", 2: "#9AE6B4"}
     
     col1, col2 = st.columns(2)
 
     with col1:
-        st.subheader("Purchase Amount by Cluster")
+        st.subheader("💰 Cluster-wise Purchase Distribution")
         fig1 = px.bar(df, x="cluster", y="purchase_amount", color="cluster", 
                     title="Purchase Amount Distribution",
-                    labels={"cluster": "Customer Cluster", "purchase_amount": "Purchase Amount ($)"})
+                    labels={"cluster": "Customer Cluster", "purchase_amount": "Purchase Amount (₹)"},
+                    template=plot_template,
+                    color_discrete_map=cluster_colors)
+        fig1.update_layout(height=300)
         st.plotly_chart(fig1, use_container_width=True)
 
     with col2:
-        st.subheader("Age Distribution by Cluster")
+        st.subheader("👥 Age Distribution by Cluster")
         fig2 = px.histogram(df, x="age", color="cluster", barmode="overlay",
                            title="Age Distribution",
-                           labels={"age": "Customer Age", "count": "Number of Customers"})
+                           labels={"age": "Customer Age", "count": "Number of Customers"},
+                           template=plot_template,
+                           color_discrete_map=cluster_colors)
+        fig2.update_layout(height=300)
         st.plotly_chart(fig2, use_container_width=True)
 
     col3, col4 = st.columns(2)
 
     with col3:
-        st.subheader("Cluster Distribution")
+        st.subheader("👤 Total Customers Per Cluster")
         cluster_counts = df["cluster"].value_counts().reset_index()
         cluster_counts.columns = ["Cluster", "Total"]
         fig3 = px.pie(cluster_counts, values="Total", names="Cluster",
-                     title="Customer Segment Distribution")
+                     title="Customer Segment Distribution",
+                     template=plot_template,
+                     color="Cluster",
+                     color_discrete_map=cluster_colors)
+        fig3.update_layout(height=300)
         st.plotly_chart(fig3, use_container_width=True)
 
     with col4:
-        st.subheader("Average Purchase by Cluster")
+        st.subheader("💲 Average Purchase Per Cluster")
         avg_purchase = df.groupby("cluster")["purchase_amount"].mean().reset_index()
         fig4 = px.bar(avg_purchase, x="cluster", y="purchase_amount", color="cluster",
                      title="Average Purchase Amount",
-                     labels={"cluster": "Customer Cluster", "purchase_amount": "Avg Purchase Amount ($)"})
+                     labels={"cluster": "Customer Cluster", "purchase_amount": "Avg Purchase Amount (₹)"},
+                     template=plot_template,
+                     color_discrete_map=cluster_colors)
+        fig4.update_layout(height=300)
         st.plotly_chart(fig4, use_container_width=True)
 
-    st.subheader("Customer Data")
-    st.dataframe(df)
+    st.subheader("Latest Customer Data")
+    # Format the dataframe to match your screenshot
+    df_display = df.copy()
+    df_display['purchase_amount'] = df_display['purchase_amount'].apply(lambda x: f"₹{x:.2f}")
+    df_display['created_at'] = pd.to_datetime(df_display['created_at']).dt.strftime('%Y-%m-%d %H:%M:%S')
+    st.dataframe(df_display[['customer_id', 'name', 'age', 'purchase_amount', 'cluster', 'created_at']], use_container_width=True)
 
     st.download_button("⬇ Download CSV", df.to_csv(index=False), "customer_segments.csv", "text/csv")
 
@@ -195,14 +221,10 @@ st.markdown("---")
 if st.button("🔄 Force Full Page Refresh"):
     st.rerun()
 
-# Improved auto-refresh mechanism
+# Improved auto-refresh mechanism with better timing control
 if auto_refresh:
-    def refresh_callback():
-        st.session_state.refresh_counter += 1
-        st.session_state.last_refresh_time = datetime.now().strftime('%H:%M:%S')
+    if time.time() - st.session_state['refresh_timer'] >= 5:
+        st.session_state['refresh_counter'] += 1
+        st.session_state['last_refresh_time'] = datetime.now().strftime('%H:%M:%S')
+        st.session_state['refresh_timer'] = time.time()
         st.rerun()
-    if 'refresh_timer' not in st.session_state:
-        st.session_state.refresh_timer = time.time()
-    if time.time() - st.session_state.refresh_timer >= 5:
-        refresh_callback()
-        st.session_state.refresh_timer = time.time()
