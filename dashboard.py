@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 from sqlalchemy import create_engine, text
 import urllib.parse
+import time
 from datetime import datetime, timedelta
 
 # Neon Database Connection
