@@ -84,14 +84,16 @@ auto_refresh = st.sidebar.checkbox("Enable Auto-Refresh (5s)", value=True)
 
 # Time range filter with custom styling
 st.sidebar.markdown("Time Range (hours)")
-time_range = st.sidebar.slider("", 1, 168, 48, key="time_range_slider", 
-                              help="Filter data based on how many hours back to look")
+time_range = st.sidebar.slider("Time Range", 1, 168, 48, key="time_range_slider", 
+                              help="Filter data based on how many hours back to look", 
+                              label_visibility="collapsed")
 from_time = datetime.now(timezone.utc) - timedelta(hours=time_range)
 
 # Cluster filter
 st.sidebar.markdown("Clusters")
-clusters = st.sidebar.multiselect("", [0, 1, 2], default=[0, 1, 2], 
-                                 format_func=lambda x: f"Cluster {x}")
+clusters = st.sidebar.multiselect("Clusters", [0, 1, 2], default=[0, 1, 2], 
+                                 format_func=lambda x: f"Cluster {x}", 
+                                 label_visibility="collapsed")
 if not clusters:
     clusters = [0, 1, 2]
 
@@ -112,12 +114,14 @@ try:
             max_val = 5000
             
         st.sidebar.markdown("Purchase Amount")
-        purchase_min, purchase_max = st.sidebar.slider("", 
-            min_val, max_val, (min_val, max_val), key="purchase_amount_slider")
+        purchase_min, purchase_max = st.sidebar.slider("Purchase Range", 
+            min_val, max_val, (min_val, max_val), key="purchase_amount_slider", 
+            label_visibility="collapsed")
 except Exception as e:
     st.sidebar.warning(f"Could not fetch purchase limits: {str(e)[:100]}")
     st.sidebar.markdown("Purchase Amount")
-    purchase_min, purchase_max = st.sidebar.slider("", 0.0, 5000.0, (0.0, 5000.0))
+    purchase_min, purchase_max = st.sidebar.slider("Purchase Range", 0.0, 5000.0, (0.0, 5000.0), 
+                                                  label_visibility="collapsed")
 
 # Function to fetch data with improved query and error handling
 def fetch_data():
@@ -137,6 +141,8 @@ def fetch_data():
         """
         st.sidebar.markdown(f"**Debug Query**: {query}")
         with engine.connect() as conn:
+            result = conn.execute(text(query)).fetchall()  # Debug raw result
+            st.sidebar.markdown(f"**Debug Raw Rows**: {len(result)}")
             df = pd.read_sql(query, conn)
             if df is not None and not df.empty:
                 st.session_state['last_data_timestamp'] = df['created_at'].max()
