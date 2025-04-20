@@ -7,6 +7,7 @@ import random
 from datetime import datetime
 import os
 import pickle
+import names  # Add this library: pip install names for random name generation
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -59,22 +60,31 @@ def generate_customer_data(user):
     else:
         customer_id = base_id
 
-    # Check if this customer already exists
+    # Get or generate name data
     if customer_id in customer_profiles:
         profile = customer_profiles[customer_id]
-        # Realistic purchase amount update (-10% to +20% change)
+        name_data = profile["name"]
+        firstname = name_data["firstname"]
+        lastname = name_data["lastname"]
+    else:
+        try:
+            name_data = user["name"]
+            firstname = name_data["firstname"]
+            lastname = name_data["lastname"]
+        except (KeyError, TypeError):
+            firstname = names.get_first_name()  # Generate random first name
+            lastname = names.get_last_name()   # Generate random last name
+
+    # Realistic purchase amount update
+    if customer_id in customer_profiles:
+        profile = customer_profiles[customer_id]
         previous_amount = profile['purchase_amount']
         change_percent = random.uniform(-0.10, 0.20)
-        new_amount = round(max(10.0, previous_amount * (1 + change_percent)), 2)  # Cap at $10 min
-        # Occasional big purchase (5% chance, up to $2000)
+        new_amount = round(max(10.0, previous_amount * (1 + change_percent)), 2)
         if random.random() < 0.05:
             new_amount = round(random.uniform(500, 2000), 2)
     else:
-        firstname = user["name"]["firstname"]
-        lastname = user["name"]["lastname"]
-        # Realistic age based on API data or random if new
         age = user.get("dob", {}).get("age", random.randint(18, 80))
-        # Realistic initial purchase amount
         new_amount = round(random.uniform(10, 2000), 2)
 
     # Determine segment based on purchase amount
@@ -89,7 +99,7 @@ def generate_customer_data(user):
     profile = {
         "customer_id": customer_id,
         "name": {"firstname": firstname, "lastname": lastname},
-        "age": age,
+        "age": age if 'age' in locals() else random.randint(18, 80),
         "purchase_amount": new_amount,
         "segment": segment,
         "timestamp": time.time()
@@ -132,6 +142,6 @@ while True:
         save_counter = 0
     
     logger.info(f"Processed {len(users)} users. Waiting 5 seconds before next batch...")
-    time.sleep(5)
+    time.time()
 
 producer.flush()
