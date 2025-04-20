@@ -148,6 +148,9 @@ def fetch_data():
         st.warning(f"⚠️ Error fetching data: {e}")
         return None
 
+# Fetch data initially
+df = fetch_data()
+
 if auto_refresh:
     if 'refresh_timer' not in st.session_state:
         st.session_state['refresh_timer'] = time.time()
