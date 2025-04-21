@@ -141,9 +141,15 @@ st.markdown(
 
 st.markdown("<h1>📊 Real-Time Customer Segmentation Dashboard</h1>", unsafe_allow_html=True)
 
-# Initialize session state for latest record count
+# Initialize session state for latest record count and auto-refresh
 if 'prev_record_count' not in st.session_state:
     st.session_state['prev_record_count'] = 0
+    
+if 'last_refresh_time' not in st.session_state:
+    st.session_state['last_refresh_time'] = datetime.now().strftime('%H:%M:%S')
+    
+if 'refresh_counter' not in st.session_state:
+    st.session_state['refresh_counter'] = 0
 
 # Sidebar for filters
 st.sidebar.header("🔍 Filters")
@@ -187,9 +193,6 @@ else:
 auto_refresh = st.sidebar.checkbox("Enable Auto-Refresh", value=True)
 refresh_rate = st.sidebar.slider("Refresh Rate (seconds)", 1, 30, 3)  # Allow faster refresh rates
 
-if 'last_refresh_time' not in st.session_state:
-    st.session_state['last_refresh_time'] = datetime.now().strftime('%H:%M:%S')
-
 # Create placeholders for dynamic content
 refresh_indicator = st.empty()
 main_content = st.container()
@@ -197,7 +200,8 @@ main_content = st.container()
 # Manual refresh button when auto-refresh is off
 if not auto_refresh:
     if st.sidebar.button("🔄 Refresh Data"):
-        st.experimental_rerun()
+        st.session_state['refresh_counter'] += 1
+        st.rerun()  # Use st.rerun() instead of st.experimental_rerun()
 
 # Main content rendering function - fixes the issue by separating data fetching from visualization
 def render_dashboard():
@@ -308,5 +312,19 @@ with main_content:
 
 # Auto-refresh logic using the proper Streamlit way
 if auto_refresh:
-    time.sleep(refresh_rate)
-    st.experimental_rerun()
+    # Create a refresh trigger that will rerun the app
+    refresh_trigger = st.empty()
+    with refresh_trigger:
+        st.markdown(f"""
+        <div id="refresh-trigger" style="display: none;">
+            Refresh trigger: {time.time()}
+        </div>
+        <script>
+            function refreshPage() {{
+                setTimeout(function() {{ 
+                    window.location.reload();
+                }}, {refresh_rate * 1000});
+            }}
+            refreshPage();
+        </script>
+        """, unsafe_allow_html=True)
