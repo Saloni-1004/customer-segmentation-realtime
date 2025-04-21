@@ -1,9 +1,11 @@
 import requests
 import random
 import time
+import json
 from sqlalchemy import create_engine, text
 import urllib.parse
 from datetime import datetime
+from kafka import KafkaProducer
 
 # Neon Database Connection
 DB_HOST = "ep-dry-violet-a4v38rh7-pooler.us-east-1.aws.neon.tech"
@@ -12,6 +14,17 @@ DB_NAME = "neondb"
 DB_USER = "neondb_owner"
 DB_PASSWORD = urllib.parse.quote_plus("npg_5UbnztxlVuD1")
 DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?sslmode=require"
+
+# Initialize Kafka producer
+try:
+    producer = KafkaProducer(
+        bootstrap_servers='localhost:9092',
+        value_serializer=lambda x: json.dumps(x).encode('utf-8')
+    )
+    print("Kafka producer initialized successfully.")
+except Exception as e:
+    print(f"Failed to initialize Kafka producer: {e}")
+    exit(1)
 
 # Initialize database engine
 try:
@@ -49,20 +62,30 @@ while True:
             "name": unique_name,
             "age": random.randint(18, 65),
             "purchase_amount": round(random.uniform(10, 500), 2),
-            "cluster": random.randint(0, 2),  # Randomly assign cluster 0, 1, or 2
-            "created_at": datetime.now()  # Use current timestamp
+            "created_at": datetime.now().isoformat()  # ISO format for JSON serialization
         }
         
-        # Insert data into customer_segments table
+        # Send message to Kafka
+        try:
+            producer.send('customer-data', value=data)
+            print(f"Sent message to Kafka: {data}")
+        except Exception as e:
+            print(f"Failed to send message to Kafka: {e}")
+        
+        # Also insert data into customer_segments table (if you want to keep this functionality)
+        kafka_data = data.copy()
+        kafka_data["cluster"] = random.randint(0, 2)  # Randomly assign cluster 0, 1, or 2
+        kafka_data["created_at"] = datetime.now()  # Use datetime object for database
+        
         with engine.connect() as conn:
             try:
                 query = text("""
                     INSERT INTO customer_segments (customer_id, name, age, purchase_amount, cluster, created_at)
                     VALUES (:customer_id, :name, :age, :purchase_amount, :cluster, :created_at)
                 """)
-                conn.execute(query, **data)  # Corrected to use dictionary unpacking with text()
+                conn.execute(query, parameters=kafka_data)  # Use parameters= to pass the dictionary
                 conn.commit()
-                print(f"Successfully inserted record with customer_id: {customer_id}")
+                print(f"Successfully inserted record: {kafka_data}")
             except Exception as e:
                 print(f"Insertion failed: {e}")
         
