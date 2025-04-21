@@ -124,6 +124,12 @@ st.markdown(
     .js-plotly-plot {
         transition: none !important;
     }
+    
+    /* Custom styling for tables to replace matplotlib gradient */
+    .highlight {
+        background-color: rgba(0, 229, 255, 0.3) !important;
+        font-weight: bold;
+    }
     </style>
     """,
     unsafe_allow_html=True
@@ -162,11 +168,19 @@ auto_refresh = st.sidebar.checkbox("Enable Auto-Refresh (5s)", value=True)
 
 # Fetch data function
 def fetch_data():
+    # Fix for empty clusters list
+    if not clusters:
+        cluster_condition = "(0, 1, 2)"
+    elif len(clusters) == 1:
+        cluster_condition = f"({clusters[0]})"
+    else:
+        cluster_condition = tuple(clusters)
+        
     query = f"""
         SELECT record_id, customer_id, name, age, purchase_amount, cluster, created_at 
         FROM customer_segments 
         WHERE created_at >= %s 
-        AND cluster IN {tuple(clusters) if len(clusters) > 1 else '(' + str(clusters[0]) + ')' if clusters else '(0, 1, 2)'}
+        AND cluster IN {cluster_condition}
         AND purchase_amount BETWEEN %s AND %s
         ORDER BY created_at DESC
     """
@@ -287,16 +301,23 @@ else:
         st.plotly_chart(fig4, use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # Add customer data table with improved styling
+    # Add customer data table with simple formatting (no matplotlib dependency)
     st.markdown("<div class='chart-container'>", unsafe_allow_html=True)
     st.markdown("<p class='chart-title'>📋 Latest Customer Data</p>", unsafe_allow_html=True)
     
-    # Format table with better styling
+    # Format table without using background_gradient
+    display_df = df[["customer_id", "name", "age", "purchase_amount", "cluster", "created_at"]].copy()
+    display_df["purchase_amount"] = display_df["purchase_amount"].apply(lambda x: f"${x:.2f}")
+    
     st.dataframe(
-        df[["customer_id", "name", "age", "purchase_amount", "cluster", "created_at"]].style
-        .format({"purchase_amount": "${:.2f}"})
-        .background_gradient(cmap="YlGnBu", subset=["purchase_amount"]),
-        use_container_width=True
+        display_df,
+        use_container_width=True,
+        column_config={
+            "purchase_amount": st.column_config.TextColumn("Purchase Amount", help="Amount spent by customer"),
+            "cluster": st.column_config.NumberColumn("Cluster", help="Customer segment cluster"),
+            "created_at": st.column_config.DatetimeColumn("Created At", format="DD/MM/YYYY hh:mm:ss"),
+        },
+        hide_index=True
     )
     st.markdown("</div>", unsafe_allow_html=True)
 
