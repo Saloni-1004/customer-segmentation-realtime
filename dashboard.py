@@ -3,7 +3,6 @@ import pandas as pd
 import plotly.express as px
 from sqlalchemy import create_engine, text
 import urllib.parse
-import time
 from datetime import datetime, timedelta
 
 # Neon Database Connection
@@ -71,7 +70,7 @@ def get_purchase_range(engine):
     return 0, 1000  # Default range
 
 # Main function to render the dashboard
-def render_dashboard(df, new_records):
+def render_dashboard(df, new_records, auto_refresh):
     current_time = datetime.now().strftime('%H:%M:%S.%f')[:-3]
     
     # Display refresh indicator
@@ -272,7 +271,7 @@ engine = get_database_engine()
 st.sidebar.header("🔍 Filters")
 
 # Time range filter
-time_range = st.sidebar.slider("Select Time Range (Hours)", 0, 168, 12)
+time_range = st.sidebar.slider("Select Time Range (Hours)", 0, 168, 48)
 from_time = datetime.now() - timedelta(hours=time_range)
 
 # Cluster filter - ensure we have all clusters by default
@@ -290,13 +289,8 @@ auto_refresh = st.sidebar.checkbox("Enable Auto-Refresh", value=True)
 refresh_rate = st.sidebar.slider("Refresh Rate (seconds)", 1, 30, 3)
 
 # Manual refresh button
-if not auto_refresh:
-    if st.sidebar.button("🔄 Refresh Data"):
-        st.session_state['refresh_counter'] += 1
-
-# Create a placeholder for dynamic content
-refresh_indicator = st.empty()
-main_content = st.container()
+if not auto_refresh and st.sidebar.button("🔄 Refresh Data"):
+    st.session_state['refresh_counter'] += 1
 
 # Fetch data
 df = fetch_data(engine, from_time, clusters, purchase_min, purchase_max)
@@ -309,11 +303,14 @@ if not df.empty:
         new_records = current_record_count - st.session_state['prev_record_count']
     st.session_state['prev_record_count'] = current_record_count
 
-# Render dashboard
-with main_content:
-    render_dashboard(df, new_records)
+# Render dashboard - only once
+render_dashboard(df, new_records, auto_refresh)
 
-# Auto-refresh logic using Streamlit's way
+# Auto-refresh logic using Streamlit's recommended method
 if auto_refresh:
-    time.sleep(refresh_rate)
-    st.rerun()
+    # Use st.experimental_rerun() with a proper auto-refresh framework
+    st.empty()
+    # Auto refresh using client-side refresh meta tag (as Streamlit doesn't have native interval refresh)
+    st.markdown(f"""
+        <meta http-equiv="refresh" content="{refresh_rate}">
+    """, unsafe_allow_html=True)
