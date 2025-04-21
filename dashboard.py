@@ -190,27 +190,33 @@ refresh_rate = st.sidebar.slider("Refresh Rate (seconds)", 1, 30, 3)  # Allow fa
 if 'last_refresh_time' not in st.session_state:
     st.session_state['last_refresh_time'] = datetime.now().strftime('%H:%M:%S')
 
-# Create a placeholder for the data display
-main_container = st.container()
+# Create placeholders for dynamic content
+refresh_indicator = st.empty()
+main_content = st.container()
 
-# This will run in a continuous loop if auto-refresh is enabled
-while True:
-    with main_container:
-        # Fetch data
-        df = fetch_data(engine, from_time, clusters, purchase_min, purchase_max)
-        
-        current_time = datetime.now().strftime('%H:%M:%S.%f')[:-3]
-        st.session_state['last_refresh_time'] = current_time
-        
-        # Check if we have new data
-        new_records = 0
-        if df is not None:
-            current_record_count = len(df)
-            if 'prev_record_count' in st.session_state:
-                new_records = current_record_count - st.session_state['prev_record_count']
-            st.session_state['prev_record_count'] = current_record_count
-        
-        # Display refresh indicator
+# Manual refresh button when auto-refresh is off
+if not auto_refresh:
+    if st.sidebar.button("🔄 Refresh Data"):
+        st.experimental_rerun()
+
+# Main content rendering function - fixes the issue by separating data fetching from visualization
+def render_dashboard():
+    # Fetch data
+    df = fetch_data(engine, from_time, clusters, purchase_min, purchase_max)
+    
+    current_time = datetime.now().strftime('%H:%M:%S.%f')[:-3]
+    st.session_state['last_refresh_time'] = current_time
+    
+    # Check if we have new data
+    new_records = 0
+    if df is not None:
+        current_record_count = len(df)
+        if 'prev_record_count' in st.session_state:
+            new_records = current_record_count - st.session_state['prev_record_count']
+        st.session_state['prev_record_count'] = current_record_count
+    
+    # Display refresh indicator
+    with refresh_indicator:
         st.markdown(f"""
         <div style="display: flex; justify-content: space-between; align-items: center;">
             <div class="refresh-time">🕒 Last refresh: {current_time}</div>
@@ -219,94 +225,88 @@ while True:
         </div>
         """, unsafe_allow_html=True)
 
-        if df is not None and not df.empty:
-            # Dashboard Layout
-            col1, col2 = st.columns(2)
+    if df is not None and not df.empty:
+        # Dashboard Layout
+        col1, col2 = st.columns(2)
 
-            with col1:
-                st.markdown("<div class='chart-container'>", unsafe_allow_html=True)
-                st.markdown("<p class='chart-title'>💰 Cluster-wise Purchase Distribution</p>", unsafe_allow_html=True)
-                fig1 = px.bar(df, x="cluster", y="purchase_amount", color="cluster",
-                            labels={"cluster": "Cluster", "purchase_amount": "Purchase Amount"},
-                            color_discrete_sequence=px.colors.qualitative.Set1)
-                fig1.update_layout(height=400)
-                st.plotly_chart(fig1, use_container_width=True)
-                st.markdown("</div>", unsafe_allow_html=True)
-
-            with col2:
-                st.markdown("<div class='chart-container'>", unsafe_allow_html=True)
-                st.markdown("<p class='chart-title'>👤 Age Distribution by Cluster</p>", unsafe_allow_html=True)
-                fig2 = px.histogram(df, x="age", color="cluster",
-                                labels={"age": "Age", "count": "Number of Customers"},
-                                barmode="overlay", color_discrete_sequence=px.colors.qualitative.Set1)
-                fig2.update_layout(height=400)
-                st.plotly_chart(fig2, use_container_width=True)
-                st.markdown("</div>", unsafe_allow_html=True)
-
-            col3, col4 = st.columns(2)
-
-            with col3:
-                st.markdown("<div class='chart-container'>", unsafe_allow_html=True)
-                st.markdown("<p class='chart-title'>👥 Total Customers Per Cluster</p>", unsafe_allow_html=True)
-                cluster_counts = df["cluster"].value_counts().reset_index()
-                cluster_counts.columns = ["Cluster", "Total Customers"]
-                fig3 = px.pie(cluster_counts, values="Total Customers", names="Cluster",
-                            color_discrete_sequence=px.colors.qualitative.Bold)
-                fig3.update_layout(height=400)
-                st.plotly_chart(fig3, use_container_width=True)
-                st.markdown("</div>", unsafe_allow_html=True)
-
-            with col4:
-                st.markdown("<div class='chart-container'>", unsafe_allow_html=True)
-                st.markdown("<p class='chart-title'>💸 Average Purchase Per Cluster</p>", unsafe_allow_html=True)
-                avg_purchase = df.groupby("cluster")["purchase_amount"].mean().reset_index()
-                fig4 = px.bar(avg_purchase, x="cluster", y="purchase_amount", color="cluster",
-                            labels={"cluster": "Cluster", "purchase_amount": "Avg Purchase"},
-                            color_discrete_sequence=px.colors.qualitative.Set1)
-                fig4.update_layout(height=400)
-                st.plotly_chart(fig4, use_container_width=True)
-                st.markdown("</div>", unsafe_allow_html=True)
-
-            # Add customer data table with latest records at the top
+        with col1:
             st.markdown("<div class='chart-container'>", unsafe_allow_html=True)
-            st.markdown("<p class='chart-title'>📋 Latest Customer Data</p>", unsafe_allow_html=True)
-            
-            # Sort by created_at to show newest first
-            df_sorted = df.sort_values(by="created_at", ascending=False).head(10)
-            st.dataframe(df_sorted[["customer_id", "name", "age", "purchase_amount", "cluster", "created_at"]].style.format({"purchase_amount": "${:.2f}"}), use_container_width=True)
+            st.markdown("<p class='chart-title'>💰 Cluster-wise Purchase Distribution</p>", unsafe_allow_html=True)
+            fig1 = px.bar(df, x="cluster", y="purchase_amount", color="cluster",
+                        labels={"cluster": "Cluster", "purchase_amount": "Purchase Amount"},
+                        color_discrete_sequence=px.colors.qualitative.Set1)
+            fig1.update_layout(height=400)
+            st.plotly_chart(fig1, use_container_width=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
-            # Add alert for high purchases
-            high_purchases = df[df["purchase_amount"] > 400]
-            if not high_purchases.empty:
-                st.warning(f"⚠️ Alert: {len(high_purchases)} high purchase amounts detected! Check cluster data.")
-                
-            # Display overall stats
-            col_stats1, col_stats2, col_stats3 = st.columns(3)
-            with col_stats1:
-                st.metric(label="Total Customers", value=len(df), delta=new_records)
-            with col_stats2:
-                st.metric(label="Avg Purchase Amount", value=f"${df['purchase_amount'].mean():.2f}")
-            with col_stats3:
-                st.metric(label="Avg Customer Age", value=f"{df['age'].mean():.1f}")
+        with col2:
+            st.markdown("<div class='chart-container'>", unsafe_allow_html=True)
+            st.markdown("<p class='chart-title'>👤 Age Distribution by Cluster</p>", unsafe_allow_html=True)
+            fig2 = px.histogram(df, x="age", color="cluster",
+                            labels={"age": "Age", "count": "Number of Customers"},
+                            barmode="overlay", color_discrete_sequence=px.colors.qualitative.Set1)
+            fig2.update_layout(height=400)
+            st.plotly_chart(fig2, use_container_width=True)
+            st.markdown("</div>", unsafe_allow_html=True)
 
-            # Export data
-            if st.download_button("📥 Download Data as CSV", df.to_csv(index=False), "customer_segments.csv", "text/csv"):
-                st.success("Data downloaded successfully!")
-        else:
-            st.warning("⚠️ No data available. Check database connection, filters, or add records to customer_segments.")
+        col3, col4 = st.columns(2)
+
+        with col3:
+            st.markdown("<div class='chart-container'>", unsafe_allow_html=True)
+            st.markdown("<p class='chart-title'>👥 Total Customers Per Cluster</p>", unsafe_allow_html=True)
+            cluster_counts = df["cluster"].value_counts().reset_index()
+            cluster_counts.columns = ["Cluster", "Total Customers"]
+            fig3 = px.pie(cluster_counts, values="Total Customers", names="Cluster",
+                        color_discrete_sequence=px.colors.qualitative.Bold)
+            fig3.update_layout(height=400)
+            st.plotly_chart(fig3, use_container_width=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        with col4:
+            st.markdown("<div class='chart-container'>", unsafe_allow_html=True)
+            st.markdown("<p class='chart-title'>💸 Average Purchase Per Cluster</p>", unsafe_allow_html=True)
+            avg_purchase = df.groupby("cluster")["purchase_amount"].mean().reset_index()
+            fig4 = px.bar(avg_purchase, x="cluster", y="purchase_amount", color="cluster",
+                        labels={"cluster": "Cluster", "purchase_amount": "Avg Purchase"},
+                        color_discrete_sequence=px.colors.qualitative.Set1)
+            fig4.update_layout(height=400)
+            st.plotly_chart(fig4, use_container_width=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        # Add customer data table with latest records at the top
+        st.markdown("<div class='chart-container'>", unsafe_allow_html=True)
+        st.markdown("<p class='chart-title'>📋 Latest Customer Data</p>", unsafe_allow_html=True)
         
-        # Break the loop if auto-refresh is disabled
-        if not auto_refresh:
-            break
+        # Sort by created_at to show newest first
+        df_sorted = df.sort_values(by="created_at", ascending=False).head(10)
+        st.dataframe(df_sorted[["customer_id", "name", "age", "purchase_amount", "cluster", "created_at"]].style.format({"purchase_amount": "${:.2f}"}), use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # Add alert for high purchases
+        high_purchases = df[df["purchase_amount"] > 400]
+        if not high_purchases.empty:
+            st.warning(f"⚠️ Alert: {len(high_purchases)} high purchase amounts detected! Check cluster data.")
             
-        # Add manual refresh button when auto-refresh is off
-        if not auto_refresh and st.button("🔄 Refresh Data"):
-            continue
-            
-        # Wait for the specified refresh rate
-        if auto_refresh:
-            time.sleep(refresh_rate)
-            st.experimental_rerun()
-        else:
-            break
+        # Display overall stats
+        col_stats1, col_stats2, col_stats3 = st.columns(3)
+        with col_stats1:
+            st.metric(label="Total Customers", value=len(df), delta=new_records)
+        with col_stats2:
+            st.metric(label="Avg Purchase Amount", value=f"${df['purchase_amount'].mean():.2f}")
+        with col_stats3:
+            st.metric(label="Avg Customer Age", value=f"{df['age'].mean():.1f}")
+
+        # Export data
+        if st.download_button("📥 Download Data as CSV", df.to_csv(index=False), "customer_segments.csv", "text/csv"):
+            st.success("Data downloaded successfully!")
+    else:
+        st.warning("⚠️ No data available. Check database connection, filters, or add records to customer_segments.")
+
+# Initial render
+with main_content:
+    render_dashboard()
+
+# Auto-refresh logic using the proper Streamlit way
+if auto_refresh:
+    time.sleep(refresh_rate)
+    st.experimental_rerun()
