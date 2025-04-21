@@ -23,84 +23,122 @@ except Exception as e:
 # Streamlit Page Config
 st.set_page_config(page_title="📊 Real-Time Customer Segmentation", layout="wide")
 
-# Custom CSS for Styling
+# Custom CSS for Styling - Fixed flickering and improved visibility
 st.markdown(
     """
     <style>
     body { background-color: #121212; color: white; }
     .stApp { background-color: #1E1E1E; }
+    
+    /* Improved header visibility with stronger contrast and brighter colors */
     h1 { 
         text-align: center; 
-        font-size: 40px; 
-        font-weight: bold; 
-        color: #4CAF50; 
-        padding: 10px; 
-        background: linear-gradient(to right, #0f2027, #203a43, #2c5364); 
+        font-size: 42px !important; 
+        font-weight: bold !important; 
+        color: #FFFFFF !important; 
+        padding: 15px; 
+        background: linear-gradient(to right, #004d40, #00796b, #009688); 
         border-radius: 15px; 
-        box-shadow: 0px 4px 15px rgba(0, 255, 0, 0.3); 
-        animation: fadeIn 1s ease-in-out; 
+        box-shadow: 0px 4px 15px rgba(0, 255, 255, 0.4); 
+        margin-bottom: 25px !important;
+        letter-spacing: 1px;
     }
-    @keyframes fadeIn {
-        from { opacity: 0; }
-        to { opacity: 1; }
-    }
+    
+    /* Reduced animations to prevent flickering */
     .chart-container { 
         border-radius: 15px; 
         padding: 20px; 
         background-color: #2A2A2A; 
         box-shadow: 0px 5px 20px rgba(255, 255, 255, 0.15); 
-        transition: transform 0.3s ease, box-shadow 0.3s ease; 
+        margin-bottom: 20px;
+        transition: all 0.2s ease;
     }
+    
+    /* Softer hover effect */
     .chart-container:hover { 
-        transform: scale(1.02); 
-        box-shadow: 0px 8px 25px rgba(255, 255, 255, 0.25); 
+        transform: scale(1.01); 
+        box-shadow: 0px 8px 25px rgba(255, 255, 255, 0.2); 
     }
+    
     .chart-title { 
-        font-size: 20px; 
+        font-size: 22px !important; 
         font-weight: bold; 
         margin-bottom: 15px; 
-        color: #FFD700; 
-        text-shadow: 0px 1px 5px rgba(255, 215, 0, 0.5); 
+        color: #00E5FF !important; 
+        text-shadow: 0px 1px 3px rgba(0, 229, 255, 0.4); 
     }
+    
     .stButton>button { 
-        background-color: #4CAF50; 
+        background-color: #00897B; 
         color: white; 
         border-radius: 10px; 
         padding: 10px 20px; 
         font-weight: bold; 
-        transition: background-color 0.3s ease; 
+        transition: background-color 0.2s ease; 
     }
+    
     .stButton>button:hover { 
-        background-color: #45a049; 
+        background-color: #00695C; 
         cursor: pointer; 
     }
+    
     .stWarning { 
         background-color: #333333; 
         border: 2px solid #FF4444; 
         border-radius: 10px; 
         padding: 10px; 
         color: #FF4444; 
-        animation: shake 0.5s; 
     }
-    @keyframes shake {
-        0% { transform: translateX(0); }
-        25% { transform: translateX(-5px); }
-        50% { transform: translateX(5px); }
-        75% { transform: translateX(-5px); }
-        100% { transform: translateX(0); }
+    
+    /* Better visibility for sidebar elements */
+    .css-6qob1r.e1fqkh3o3 {
+        background-color: #263238;
+        padding: 20px 10px;
+        border-radius: 10px;
+    }
+    
+    /* Improve slider visibility */
+    .stSlider > div > div {
+        background-color: #80CBC4 !important;
+    }
+    
+    /* Dashboard header with animation but no flickering */
+    .dashboard-header {
+        font-size: 46px !important;
+        font-weight: bold !important;
+        color: #FFFFFF !important;
+        text-align: center;
+        padding: 20px;
+        background: linear-gradient(to right, #004d40, #00796b, #009688);
+        border-radius: 15px;
+        box-shadow: 0px 4px 15px rgba(0, 255, 255, 0.4);
+        margin: 10px 0 30px 0;
+    }
+    
+    /* Improve dataframe styling */
+    .dataframe {
+        font-size: 14px !important;
+    }
+    
+    /* Fix for plotly charts to prevent flickering */
+    .js-plotly-plot {
+        transition: none !important;
     }
     </style>
     """,
     unsafe_allow_html=True
 )
 
-st.markdown("<h1>📊 Real-Time Customer Segmentation Dashboard</h1>", unsafe_allow_html=True)
+# Updated Header with better visibility
+st.markdown('<div class="dashboard-header">📊 Real-Time Customer Segmentation Dashboard</div>', unsafe_allow_html=True)
 
 # Initialize session state
 if 'last_refresh' not in st.session_state:
     st.session_state['last_refresh'] = time.time()
 if 'refresh_interval' not in st.session_state:
     st.session_state['refresh_interval'] = 5  # 5 seconds
+if 'data' not in st.session_state:
+    st.session_state['data'] = None
 
 # Sidebar for filters
 st.sidebar.header("🔍 Filters")
@@ -128,7 +166,7 @@ def fetch_data():
         SELECT record_id, customer_id, name, age, purchase_amount, cluster, created_at 
         FROM customer_segments 
         WHERE created_at >= %s 
-        AND cluster IN {tuple(clusters) if clusters else (0, 1, 2)}
+        AND cluster IN {tuple(clusters) if len(clusters) > 1 else '(' + str(clusters[0]) + ')' if clusters else '(0, 1, 2)'}
         AND purchase_amount BETWEEN %s AND %s
         ORDER BY created_at DESC
     """
@@ -141,14 +179,22 @@ def fetch_data():
         st.error(f"⚠️ Error fetching data: {e}")
         return pd.DataFrame()
 
-# Fetch data
-df = fetch_data()
+# Fetch data with a more stable approach to reduce flickering
+current_time = time.time()
+if auto_refresh and (current_time - st.session_state['last_refresh'] >= st.session_state['refresh_interval']):
+    st.session_state['data'] = fetch_data()
+    st.session_state['last_refresh'] = current_time
+elif st.session_state['data'] is None or not auto_refresh and st.sidebar.button("🔄 Refresh Data"):
+    st.session_state['data'] = fetch_data()
+    st.session_state['last_refresh'] = current_time
+
+df = st.session_state['data']
 
 # Display debug info
 st.sidebar.write(f"Last Fetch: {st.session_state.get('last_fetch_time', 'N/A')}")
 st.sidebar.write(f"Rows Fetched: {st.session_state.get('row_count', 0)}")
 
-if df.empty:
+if df is None or df.empty:
     st.warning("⚠️ No data available yet. Waiting for new messages...")
 else:
     # 🔹 Dashboard Layout
@@ -159,19 +205,46 @@ else:
         st.markdown("<p class='chart-title'>💰 Cluster-wise Purchase Distribution</p>", unsafe_allow_html=True)
         fig1 = px.bar(df, x="cluster", y="purchase_amount", color="cluster",
                     labels={"cluster": "Cluster", "purchase_amount": "Purchase Amount"},
-                    color_continuous_scale="teal")
-        fig1.update_layout(title_text="💰 Cluster-wise Purchase Distribution", title_x=0.5)
-        st.plotly_chart(fig1, use_container_width=True, key=f"bar_chart_{st.session_state['last_refresh']}")
+                    color_discrete_sequence=["#80DEEA", "#4DB6AC", "#00897B"])
+        fig1.update_layout(
+            title_text="", 
+            plot_bgcolor="#2A2A2A",
+            paper_bgcolor="#2A2A2A",
+            font=dict(color="#FFFFFF"),
+            xaxis=dict(gridcolor="#555555"),
+            yaxis=dict(gridcolor="#555555")
+        )
+        st.plotly_chart(fig1, use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
     with col2:
         st.markdown("<div class='chart-container'>", unsafe_allow_html=True)
         st.markdown("<p class='chart-title'>👤 Age Distribution by Cluster</p>", unsafe_allow_html=True)
+        
+        # Improved age distribution chart with distinct colors per cluster
         fig2 = px.histogram(df, x="age", color="cluster",
-                            labels={"age": "Age", "count": "Number of Customers"},
-                            barmode="overlay", color_discrete_sequence=px.colors.sequential.Viridis)
-        fig2.update_layout(title_text="👤 Age Distribution by Cluster", title_x=0.5)
-        st.plotly_chart(fig2, use_container_width=True, key=f"histogram_chart_{st.session_state['last_refresh']}")
+                           labels={"age": "Age", "count": "Number of Customers"},
+                           barmode="overlay", 
+                           opacity=0.8,
+                           color_discrete_map={
+                               0: "#FF9E80",  # Orange-red for cluster 0
+                               1: "#B388FF",  # Purple for cluster 1
+                               2: "#80D8FF"   # Blue for cluster 2
+                           })
+        
+        fig2.update_layout(
+            title_text="", 
+            plot_bgcolor="#2A2A2A",
+            paper_bgcolor="#2A2A2A",
+            font=dict(color="#FFFFFF"),
+            xaxis=dict(gridcolor="#555555", title_font=dict(size=14)),
+            yaxis=dict(gridcolor="#555555", title_font=dict(size=14)),
+            legend=dict(
+                title="Cluster",
+                font=dict(size=12)
+            )
+        )
+        st.plotly_chart(fig2, use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
     col3, col4 = st.columns(2)
@@ -182,9 +255,18 @@ else:
         cluster_counts = df["cluster"].value_counts().reset_index()
         cluster_counts.columns = ["Cluster", "Total Customers"]
         fig3 = px.pie(cluster_counts, values="Total Customers", names="Cluster",
-                    color_discrete_sequence=px.colors.sequential.Rainbow)
-        fig3.update_layout(title_text="👥 Total Customers Per Cluster", title_x=0.5)
-        st.plotly_chart(fig3, use_container_width=True, key=f"pie_chart_{st.session_state['last_refresh']}")
+                    color_discrete_map={
+                        0: "#FF9E80",  # Orange-red for cluster 0
+                        1: "#B388FF",  # Purple for cluster 1
+                        2: "#80D8FF"   # Blue for cluster 2
+                    })
+        fig3.update_layout(
+            title_text="", 
+            plot_bgcolor="#2A2A2A",
+            paper_bgcolor="#2A2A2A",
+            font=dict(color="#FFFFFF")
+        )
+        st.plotly_chart(fig3, use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
     with col4:
@@ -193,15 +275,29 @@ else:
         avg_purchase = df.groupby("cluster")["purchase_amount"].mean().reset_index()
         fig4 = px.bar(avg_purchase, x="cluster", y="purchase_amount", color="cluster",
                     labels={"cluster": "Cluster", "purchase_amount": "Avg Purchase"},
-                    color_continuous_scale="magma")
-        fig4.update_layout(title_text="💸 Average Purchase Per Cluster", title_x=0.5)
-        st.plotly_chart(fig4, use_container_width=True, key=f"avg_bar_chart_{st.session_state['last_refresh']}")
+                    color_discrete_sequence=["#FF9E80", "#B388FF", "#80D8FF"])
+        fig4.update_layout(
+            title_text="", 
+            plot_bgcolor="#2A2A2A",
+            paper_bgcolor="#2A2A2A",
+            font=dict(color="#FFFFFF"),
+            xaxis=dict(gridcolor="#555555"),
+            yaxis=dict(gridcolor="#555555")
+        )
+        st.plotly_chart(fig4, use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # Add customer data table
+    # Add customer data table with improved styling
     st.markdown("<div class='chart-container'>", unsafe_allow_html=True)
     st.markdown("<p class='chart-title'>📋 Latest Customer Data</p>", unsafe_allow_html=True)
-    st.dataframe(df[["customer_id", "name", "age", "purchase_amount", "cluster", "created_at"]].style.format({"purchase_amount": "${:.2f}"}), use_container_width=True, key=f"data_table_{st.session_state['last_refresh']}")
+    
+    # Format table with better styling
+    st.dataframe(
+        df[["customer_id", "name", "age", "purchase_amount", "cluster", "created_at"]].style
+        .format({"purchase_amount": "${:.2f}"})
+        .background_gradient(cmap="YlGnBu", subset=["purchase_amount"]),
+        use_container_width=True
+    )
     st.markdown("</div>", unsafe_allow_html=True)
 
     # Add alert for high purchases
@@ -212,14 +308,8 @@ else:
     if st.download_button("📥 Download Data as CSV", df.to_csv(index=False), "customer_segments.csv", "text/csv"):
         st.success("Data downloaded successfully!")
 
-# Auto-refresh logic
-if auto_refresh:
-    current_time = time.time()
-    if current_time - st.session_state['last_refresh'] >= st.session_state['refresh_interval']:
-        st.session_state['last_refresh'] = current_time
+# Manual refresh button at the bottom
+if not auto_refresh:
+    if st.button("🔄 Refresh Data"):
+        st.session_state['last_refresh'] = time.time()
         st.rerun()
-
-# Manual refresh
-if not auto_refresh and st.button("🔄 Refresh Data"):
-    st.session_state['last_refresh'] = time.time()
-    st.rerun()
