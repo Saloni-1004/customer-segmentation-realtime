@@ -96,11 +96,17 @@ st.markdown(
 
 st.markdown("<h1>📊 Real-Time Customer Segmentation Dashboard</h1>", unsafe_allow_html=True)
 
+# Initialize session state
+if 'last_refresh' not in st.session_state:
+    st.session_state['last_refresh'] = time.time()
+if 'refresh_interval' not in st.session_state:
+    st.session_state['refresh_interval'] = 5  # 5 seconds
+
 # Sidebar for filters
 st.sidebar.header("🔍 Filters")
 
 # Time range filter
-time_range = st.sidebar.slider("Select Time Range (Hours)", 0, 24, 1)
+time_range = st.sidebar.slider("Select Time Range (Hours)", 0, 24, 8)
 from_time = pd.Timestamp.now() - pd.Timedelta(hours=time_range)
 
 # Cluster filter
@@ -116,16 +122,31 @@ purchase_min, purchase_max = st.sidebar.slider("Purchase Amount Range",
 
 auto_refresh = st.sidebar.checkbox("Enable Auto-Refresh (5s)", value=True)
 
+# Fetch data function
+def fetch_data():
+    query = f"""
+        SELECT record_id, customer_id, name, age, purchase_amount, cluster, created_at 
+        FROM customer_segments 
+        WHERE created_at >= %s 
+        AND cluster IN {tuple(clusters) if clusters else (0, 1, 2)}
+        AND purchase_amount BETWEEN %s AND %s
+        ORDER BY created_at DESC
+    """
+    try:
+        df = pd.read_sql(query, engine, params=(from_time, purchase_min, purchase_max))
+        st.session_state['last_fetch_time'] = datetime.now().strftime('%H:%M:%S')
+        st.session_state['row_count'] = len(df)
+        return df
+    except Exception as e:
+        st.error(f"⚠️ Error fetching data: {e}")
+        return pd.DataFrame()
+
 # Fetch data
-query = f"""
-    SELECT record_id, customer_id, name, age, purchase_amount, cluster, created_at 
-    FROM customer_segments 
-    WHERE created_at >= %s 
-    AND cluster IN {tuple(clusters) if clusters else (0, 1, 2)}
-    AND purchase_amount BETWEEN %s AND %s
-    ORDER BY created_at DESC
-"""
-df = pd.read_sql(query, engine, params=(from_time, purchase_min, purchase_max))
+df = fetch_data()
+
+# Display debug info
+st.sidebar.write(f"Last Fetch: {st.session_state.get('last_fetch_time', 'N/A')}")
+st.sidebar.write(f"Rows Fetched: {st.session_state.get('row_count', 0)}")
 
 if df.empty:
     st.warning("⚠️ No data available yet. Waiting for new messages...")
@@ -140,7 +161,7 @@ else:
                     labels={"cluster": "Cluster", "purchase_amount": "Purchase Amount"},
                     color_continuous_scale="teal")
         fig1.update_layout(title_text="💰 Cluster-wise Purchase Distribution", title_x=0.5)
-        st.plotly_chart(fig1, use_container_width=True, key="bar_chart")
+        st.plotly_chart(fig1, use_container_width=True, key=f"bar_chart_{st.session_state['last_refresh']}")
         st.markdown("</div>", unsafe_allow_html=True)
 
     with col2:
@@ -150,7 +171,7 @@ else:
                             labels={"age": "Age", "count": "Number of Customers"},
                             barmode="overlay", color_discrete_sequence=px.colors.sequential.Viridis)
         fig2.update_layout(title_text="👤 Age Distribution by Cluster", title_x=0.5)
-        st.plotly_chart(fig2, use_container_width=True, key="histogram_chart")
+        st.plotly_chart(fig2, use_container_width=True, key=f"histogram_chart_{st.session_state['last_refresh']}")
         st.markdown("</div>", unsafe_allow_html=True)
 
     col3, col4 = st.columns(2)
@@ -163,7 +184,7 @@ else:
         fig3 = px.pie(cluster_counts, values="Total Customers", names="Cluster",
                     color_discrete_sequence=px.colors.sequential.Rainbow)
         fig3.update_layout(title_text="👥 Total Customers Per Cluster", title_x=0.5)
-        st.plotly_chart(fig3, use_container_width=True, key="pie_chart")
+        st.plotly_chart(fig3, use_container_width=True, key=f"pie_chart_{st.session_state['last_refresh']}")
         st.markdown("</div>", unsafe_allow_html=True)
 
     with col4:
@@ -174,13 +195,13 @@ else:
                     labels={"cluster": "Cluster", "purchase_amount": "Avg Purchase"},
                     color_continuous_scale="magma")
         fig4.update_layout(title_text="💸 Average Purchase Per Cluster", title_x=0.5)
-        st.plotly_chart(fig4, use_container_width=True, key="avg_bar_chart")
+        st.plotly_chart(fig4, use_container_width=True, key=f"avg_bar_chart_{st.session_state['last_refresh']}")
         st.markdown("</div>", unsafe_allow_html=True)
 
     # Add customer data table
     st.markdown("<div class='chart-container'>", unsafe_allow_html=True)
     st.markdown("<p class='chart-title'>📋 Latest Customer Data</p>", unsafe_allow_html=True)
-    st.dataframe(df[["customer_id", "name", "age", "purchase_amount", "cluster", "created_at"]].style.format({"purchase_amount": "${:.2f}"}), use_container_width=True, key="data_table")
+    st.dataframe(df[["customer_id", "name", "age", "purchase_amount", "cluster", "created_at"]].style.format({"purchase_amount": "${:.2f}"}), use_container_width=True, key=f"data_table_{st.session_state['last_refresh']}")
     st.markdown("</div>", unsafe_allow_html=True)
 
     # Add alert for high purchases
@@ -193,9 +214,12 @@ else:
 
 # Auto-refresh logic
 if auto_refresh:
-    time.sleep(5)
-    st.rerun()
+    current_time = time.time()
+    if current_time - st.session_state['last_refresh'] >= st.session_state['refresh_interval']:
+        st.session_state['last_refresh'] = current_time
+        st.rerun()
 
 # Manual refresh
 if not auto_refresh and st.button("🔄 Refresh Data"):
+    st.session_state['last_refresh'] = time.time()
     st.rerun()
