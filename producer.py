@@ -171,4 +171,8 @@ except KeyboardInterrupt:
 except Exception as e:
     print(f"An error occurred: {e}")
 finally:
+<<<<<<< HEAD
     print("Producer shutting down.")
+=======
+    print("Producer shutting down.")
+>>>>>>> 035dd0f6c347e75ed81045c6841acaf08148db93

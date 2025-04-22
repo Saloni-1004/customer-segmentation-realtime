@@ -136,4 +136,8 @@ except KeyboardInterrupt:
 finally:
     cur.close()
     conn.close()
+<<<<<<< HEAD
     print("[INFO] Database connection closed.")
+=======
+    print("[INFO] Database connection closed.")
+>>>>>>> 035dd0f6c347e75ed81045c6841acaf08148db93
