@@ -295,8 +295,4 @@ else:
 
             # Export data
             if st.download_button("📥 Download Data as CSV", df.to_csv(index=False), "customer_segments.csv", "text/csv"):
-<<<<<<< HEAD
                 st.success("Data downloaded successfully!")
-=======
-                st.success("Data downloaded successfully!")
->>>>>>> 035dd0f6c347e75ed81045c6841acaf08148db93
