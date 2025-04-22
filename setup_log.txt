@@ -1,0 +1,4 @@
+Running in LOCAL mode
+Setting up local database...
+✓ LOCAL database setup complete!
+✓ Local database is set up and ready to use!

@@ -1,0 +1,9 @@
+streamlit
+pandas
+plotly
+psycopg2-binary
+python-dotenv
+requests
+kafka-python
+scikit-learn
+sqlalchemy
