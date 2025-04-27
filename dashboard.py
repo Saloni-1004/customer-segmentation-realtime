@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 import time
 from datetime import datetime, timedelta
 
-# Apply dark theme styling with enhanced chart title visibility
+# Apply dark theme styling with enhanced chart title and metric visibility
 st.markdown("""
 <style>
     .main {
@@ -37,6 +37,9 @@ st.markdown("""
         background-color: #1F2937;
         padding: 15px;
         border-radius: 5px;
+        color: #E5E7EB !important;
+        font-size: 1.2em !important;
+        border: 1px solid #4B5563;
     }
     .stSidebar {
         background-color: #1E1E1E;
@@ -66,7 +69,7 @@ load_dotenv()
 
 # Get the mode from environment variable
 mode = os.getenv("MODE", "local")
-st.sidebar.info(f"Running	Running in {mode.upper()} mode")
+st.sidebar.info(f"Running in {mode.upper()} mode")
 
 # Database connection based on mode
 if mode == "local":
