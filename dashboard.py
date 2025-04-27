@@ -34,12 +34,14 @@ st.markdown("""
         background-color: #1F2937;
     }
     .stMetric {
-        background-color: #1F2937;
-        padding: 15px;
+        background-color: #374151;
+        padding: 20px;
         border-radius: 5px;
-        color: #E5E7EB !important;
-        font-size: 1.2em !important;
-        border: 1px solid #4B5563;
+        color: #F3F4F6 !important;
+        font-size: 1.5em !important;
+        font-weight: bold !important;
+        border: 2px solid #4B5563;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
     }
     .stSidebar {
         background-color: #1E1E1E;
